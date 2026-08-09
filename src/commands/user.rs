@@ -1,11 +1,6 @@
-//! `gar user` subcommand — manages users, homes, quotas, client catalog.
-//!
-//! Replaces `ragos user <add|resize|list|delete|doctor|quota-sync|activity>`
-//! from server/ragos-cli.nix (lines 572-857).
-//!
-//! Clean Code: each command is its own async fn, with a small dispatcher.
+//! `gar user` subcommand. Replaces `ragos user` from server/ragos-cli.nix.
 
-use std::collections::HashMap;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use chrono::Utc;
@@ -16,21 +11,33 @@ use crate::cli::UserCmd;
 use crate::config::Config;
 use crate::error::{GarError, Result};
 use crate::output;
-use crate::services::filesystem::FsType;
-use crate::services::user_system::{
-    self, ClientUserEntry, ClientUsersCatalog, HomeMeta, UserGroupsCatalog,
-};
+use crate::services::filesystem::FsOps;
+use crate::services::user_system::{self, ClientUserEntry, ClientUsersCatalog, HomeMeta, UserGroupsCatalog};
 
-/// Dispatch a UserCmd to its handler.
+const DEFAULT_USER_SUBDIRS: &[&str] = &[
+    ".config",
+    ".cache",
+    ".local/share",
+    "Desktop",
+    "Documents",
+    "Downloads",
+    "Music",
+    "Pictures",
+    "Videos",
+];
+
 pub async fn dispatch(cmd: UserCmd) -> Result<()> {
     match cmd {
-        UserCmd::Add {
-            username,
-            quota,
-            password,
-            password_hash,
-            group,
-        } => cmd_add(&username, quota.as_deref(), password.as_deref(), password_hash.as_deref(), group.as_deref()).await,
+        UserCmd::Add { username, quota, password, password_hash, group } => {
+            cmd_add(
+                &username,
+                quota.as_deref(),
+                password.as_deref(),
+                password_hash.as_deref(),
+                group.as_deref(),
+            )
+            .await
+        }
         UserCmd::Resize { username, quota, force } => cmd_resize(&username, &quota, force).await,
         UserCmd::List => cmd_list().await,
         UserCmd::Delete { username, archive } => cmd_delete(&username, archive).await,
@@ -49,7 +56,6 @@ pub struct AddResult {
     pub catalog_updated: bool,
 }
 
-/// `gar user add <name> --quota 20G [--password|--password-hash] [--group]`
 pub async fn cmd_add(
     username: &str,
     quota: Option<&str>,
@@ -58,24 +64,12 @@ pub async fn cmd_add(
     group: Option<&str>,
 ) -> Result<()> {
     let cfg = Config::from_env()?;
-
-    if username.is_empty() {
-        return Err(GarError::invalid_argument("uso: gar user add <nome> --quota 20G"));
-    }
-    if !is_valid_username(username) {
-        return Err(GarError::invalid_argument(format!(
-            "nome de usuário inválido: {}",
-            username
-        )));
-    }
-
     let quota = quota.unwrap_or("20G");
-    if human_to_bytes_check(quota).is_err() {
-        return Err(GarError::user(format!("quota inválida: {}", quota)));
-    }
-
     let group = group.unwrap_or("default");
     let home = cfg.home_base.join(username);
+
+    validate_username(username)?;
+    human_to_bytes_check(quota)?;
 
     if home.exists() {
         return Err(GarError::user(format!(
@@ -84,34 +78,20 @@ pub async fn cmd_add(
             home.display()
         )));
     }
-
     if !cfg.home_base.exists() || !user_system::is_mountpoint(&cfg.home_base) {
         return Err(GarError::user(format!(
             "home persistente nao esta montada em {}",
             cfg.home_base.display()
         )));
     }
+    let ops = FsOps::for_path(&cfg.home_base)?;
 
-    if !user_system::supports_quota(&cfg.home_base) {
-        return Err(GarError::user(format!(
-            "storage de homes em {} nao suporta per-directory quota (use btrfs/xfs/zfs)",
-            cfg.home_base.display()
-        )));
-    }
-
-    // Hash password if provided
-    let final_hash = if let Some(plain) = password {
-        user_system::hash_password(plain)?
-    } else if let Some(h) = password_hash {
-        h.to_string()
-    } else {
-        "!".to_string() // locked
+    let final_hash = match password {
+        Some(plain) => user_system::hash_password(plain)?,
+        None => password_hash.map(String::from).unwrap_or_else(|| "!".into()),
     };
 
-    // 1. Create system account
     user_system::useradd_system(username, &home.display().to_string()).await?;
-
-    // 2. Add to supplementary group if requested
     if group != "default" {
         if !crate::services::group_system::group_exists(group) {
             return Err(GarError::user(format!("grupo nao existe: {}", group)));
@@ -119,94 +99,57 @@ pub async fn cmd_add(
         user_system::useradd_to_group(username, group).await?;
     }
 
-    // 3. Create home (btrfs subvolume if btrfs)
-    create_home_dir(&home, &cfg.home_base).await?;
+    ops.create_subvolume(&home).await?;
+    bootstrap_home_tree(&home);
+    ops.enable_quotas(&cfg.home_base).await?;
+    ops.set_quota(&home, quota).await?;
 
-    // 4. Bootstrap home tree
-    bootstrap_home_tree(&home).await?;
-
-    // 5. Enable quotas + apply quota (BTRFS/XFS/ZFS detected automatically)
-    user_system::enable_quotas(&cfg.home_base).await?;
-    user_system::set_quota(&home, quota).await?;
-
-    // 6. Write metadata
-    let meta = HomeMeta {
-        user: username.into(),
-        home: home.display().to_string(),
-        quota: quota.into(),
-        updated_at: Utc::now().to_rfc3339(),
-    };
-    HomeMeta::write(&home, &meta)?;
-
-    // 7. Update client-users catalog
-    let catalog_path = cfg.runtime_root.join("client-users.json");
-    let mut catalog = ClientUsersCatalog::load(&catalog_path)?;
-    let uid = user_system::user_uid(username).unwrap_or(0);
-    let extra_groups: Vec<String> = user_system::user_groups(username)
-        .into_iter()
-        .filter(|g| !is_builtin_group(g))
-        .collect();
-    catalog.upsert(
-        username,
-        ClientUserEntry {
-            uid,
-            description: format!("GAR User {}", username),
-            hashed_password: final_hash.clone(),
-            extra_groups,
-            group_gids: Default::default(),
+    HomeMeta::write(
+        &home,
+        &HomeMeta {
+            user: username.into(),
+            home: home.display().to_string(),
+            quota: quota.into(),
+            updated_at: Utc::now().to_rfc3339(),
         },
-    );
-    catalog.save(&catalog_path)?;
+    )?;
 
-    // 8. Update user-groups catalog
-    let groups_path = cfg.runtime_root.join("user-groups.json");
-    let mut user_groups = UserGroupsCatalog::load(&groups_path)?;
-    user_groups.set_user_group(username, group);
-    user_groups.save(&groups_path)?;
-
-    let result = AddResult {
-        username: username.into(),
-        home: home.display().to_string(),
-        quota: quota.into(),
-        group: group.into(),
-        catalog_updated: true,
-    };
+    upsert_user_catalog(&cfg, username, &final_hash)?;
+    upsert_user_groups(&cfg, username, group)?;
 
     if cfg.json_output {
-        output::json(&result)?;
+        output::json(&AddResult {
+            username: username.into(),
+            home: home.display().to_string(),
+            quota: quota.into(),
+            group: group.into(),
+            catalog_updated: true,
+        })?;
     } else {
         output::ok(format!("usuário criado: {}", username));
-        println!("  home:   {}", result.home);
-        println!("  quota:  {}", result.quota);
-        println!("  grupo:  {}", result.group);
-        if final_hash == "!" {
-            println!("  catalog: conta bloqueada (use --password pra login gráfico)");
-        } else {
-            println!("  catalog: atualizado");
-        }
+        println!("  home:   {}", home.display());
+        println!("  quota:  {}", quota);
+        println!("  grupo:  {}", group);
+        println!(
+            "  catalog: {}",
+            if final_hash == "!" {
+                "conta bloqueada (use --password pra login gráfico)"
+            } else {
+                "atualizado"
+            }
+        );
     }
     Ok(())
 }
 
-/// `gar user resize <name> --quota 40G [--force]`
 pub async fn cmd_resize(username: &str, quota: &str, force: bool) -> Result<()> {
     let cfg = Config::from_env()?;
     let home = cfg.home_base.join(username);
-
     if !home.exists() {
-        return Err(GarError::user(format!(
-            "home ausente para {}: {}",
-            username,
-            home.display()
-        )));
+        return Err(GarError::user(format!("home ausente para {}: {}", username, home.display())));
     }
-    if human_to_bytes_check(quota).is_err() {
-        return Err(GarError::user(format!("quota inválida: {}", quota)));
-    }
-
-    let usage_b = user_system::dir_size_bytes(&home);
     let quota_b = human_to_bytes_check(quota)?;
-
+    let usage_b = user_system::dir_size_bytes(&home);
     let current = user_system::read_meta_value(&home, "QUOTA").unwrap_or_default();
 
     if usage_b > quota_b && !force {
@@ -217,16 +160,19 @@ pub async fn cmd_resize(username: &str, quota: &str, force: bool) -> Result<()> 
         )));
     }
 
-    user_system::enable_quotas(&cfg.home_base).await?;
-    user_system::set_quota(&home, quota).await?;
+    let ops = FsOps::for_path(&cfg.home_base)?;
+    ops.enable_quotas(&cfg.home_base).await?;
+    ops.set_quota(&home, quota).await?;
 
-    let meta = HomeMeta {
-        user: username.into(),
-        home: home.display().to_string(),
-        quota: quota.into(),
-        updated_at: Utc::now().to_rfc3339(),
-    };
-    HomeMeta::write(&home, &meta)?;
+    HomeMeta::write(
+        &home,
+        &HomeMeta {
+            user: username.into(),
+            home: home.display().to_string(),
+            quota: quota.into(),
+            updated_at: Utc::now().to_rfc3339(),
+        },
+    )?;
 
     if cfg.json_output {
         output::json(&serde_json::json!({
@@ -256,15 +202,10 @@ pub struct UserRow {
     pub home: String,
 }
 
-/// `gar user list` — table of homes with usage/quota/%.
 pub async fn cmd_list() -> Result<()> {
     let cfg = Config::from_env()?;
-
     if !cfg.home_base.exists() {
-        output::warn(format!(
-            "storage de homes ausente em {}",
-            cfg.home_base.display()
-        ));
+        output::warn(format!("storage de homes ausente em {}", cfg.home_base.display()));
         return Ok(());
     }
     if !user_system::is_mountpoint(&cfg.home_base) {
@@ -274,55 +215,34 @@ pub async fn cmd_list() -> Result<()> {
         )));
     }
 
-    let mut rows: Vec<UserRow> = Vec::new();
-    for entry in std::fs::read_dir(&cfg.home_base)? {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let username = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n,
-            None => continue,
-        };
-        if username.starts_with('.') || username == ".archive" {
-            continue;
-        }
-
-        let usage_b = user_system::dir_size_bytes(&path);
-        let usage = user_system::bytes_to_human(usage_b);
-
-        let quota_str = user_system::read_meta_value(&path, "QUOTA").unwrap_or_default();
-        let quota_b = if quota_str.is_empty() {
-            0
-        } else {
-            human_to_bytes_check(&quota_str).unwrap_or(0)
-        };
-
-        let percent = if quota_b > 0 {
-            format!("{}%", usage_b * 100 / quota_b)
-        } else {
-            "—".into()
-        };
-
-        rows.push(UserRow {
-            username: username.into(),
-            usage,
-            usage_bytes: usage_b,
-            quota: if quota_str.is_empty() { "—".into() } else { quota_str },
-            quota_bytes: quota_b,
-            percent,
-            home: path.display().to_string(),
-        });
-    }
-
+    let mut rows: Vec<UserRow> = std::fs::read_dir(&cfg.home_base)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .filter_map(|p| {
+            let name = p.file_name()?.to_str()?;
+            if name.starts_with('.') || name == ".archive" {
+                return None;
+            }
+            let usage_b = user_system::dir_size_bytes(&p);
+            let quota_str = user_system::read_meta_value(&p, "QUOTA").unwrap_or_default();
+            let quota_b = if quota_str.is_empty() { 0 } else { human_to_bytes_check(&quota_str).unwrap_or(0) };
+            Some(UserRow {
+                username: name.into(),
+                usage: user_system::bytes_to_human(usage_b),
+                usage_bytes: usage_b,
+                quota: if quota_str.is_empty() { "—".into() } else { quota_str },
+                quota_bytes: quota_b,
+                percent: if quota_b > 0 { format!("{}%", usage_b * 100 / quota_b) } else { "—".into() },
+                home: p.display().to_string(),
+            })
+        })
+        .collect();
     rows.sort_by(|a, b| a.username.cmp(&b.username));
 
     if cfg.json_output {
-        output::json(&rows)?;
-        return Ok(());
+        return output::json(&rows);
     }
-
     if rows.is_empty() {
         output::warn("Nenhum usuário encontrado.");
         return Ok(());
@@ -332,11 +252,7 @@ pub async fn cmd_list() -> Result<()> {
     println!();
     println!(
         "  {:<20} {:<12} {:<10} {:<8} {}",
-        "USERNAME".bold(),
-        "USO".bold(),
-        "QUOTA".bold(),
-        "%".bold(),
-        "HOME".bold()
+        "USERNAME".bold(), "USO".bold(), "QUOTA".bold(), "%".bold(), "HOME".bold()
     );
     for row in &rows {
         println!(
@@ -344,50 +260,36 @@ pub async fn cmd_list() -> Result<()> {
             row.username, row.usage, row.quota, row.percent, row.home
         );
     }
-    println!();
-    println!("  Total: {} usuário(s)", rows.len());
+    println!("\n  Total: {} usuário(s)", rows.len());
     Ok(())
 }
 
-/// `gar user delete <name> --archive` (archive required).
 pub async fn cmd_delete(username: &str, archive: bool) -> Result<()> {
     let cfg = Config::from_env()?;
-
     if !archive {
-        return Err(GarError::user(
-            "delete sem --archive e proibido (seguranca)",
-        ));
+        return Err(GarError::user("delete sem --archive e proibido (seguranca)"));
     }
     if username.is_empty() {
         return Err(GarError::invalid_argument("uso: gar user delete <nome> --archive"));
     }
-
     let home = cfg.home_base.join(username);
     if !home.exists() {
-        return Err(GarError::user(format!(
-            "home ausente para {}: {}",
-            username,
-            home.display()
-        )));
+        return Err(GarError::user(format!("home ausente para {}: {}", username, home.display())));
     }
 
     let stamp = Utc::now().format("%Y%m%d-%H%M%S").to_string();
     let archive_path = cfg.home_archive_base.join(format!("{}-{}", username, stamp));
-
     std::fs::create_dir_all(&cfg.home_archive_base)?;
 
-    // Snapshot via filesystem abstraction (BTRFS/ZFS only)
-    if user_system::supports_quota(&home) {
-        std::fs::create_dir_all(&cfg.home_snapshot_base)?;
+    if let Ok(ops) = FsOps::for_path(&home) {
         let snap_path = cfg.home_snapshot_base.join(format!("{}-{}", username, stamp));
-        let _ = user_system::snapshot_readonly(&home, &snap_path).await;
+        std::fs::create_dir_all(&cfg.home_snapshot_base)?;
+        let _ = ops.snapshot_readonly(&home, &snap_path).await;
     }
 
-    // Move home → archive
     std::fs::rename(&home, &archive_path)?;
     let _ = user_system::userdel(username).await;
 
-    // Remove from client-users catalog
     let catalog_path = cfg.runtime_root.join("client-users.json");
     if catalog_path.exists() {
         let mut catalog = ClientUsersCatalog::load(&catalog_path)?;
@@ -407,73 +309,24 @@ pub async fn cmd_delete(username: &str, archive: bool) -> Result<()> {
     Ok(())
 }
 
-/// `gar user doctor <name>` — detailed info.
 pub async fn cmd_doctor(username: &str) -> Result<()> {
     if username.is_empty() {
         return Err(GarError::invalid_argument("uso: gar user doctor <nome>"));
     }
     let cfg = Config::from_env()?;
     let home = cfg.home_base.join(username);
-
     if !home.exists() {
-        return Err(GarError::user(format!(
-            "home ausente para {}: {}",
-            username,
-            home.display()
-        )));
+        return Err(GarError::user(format!("home ausente para {}: {}", username, home.display())));
     }
 
     let usage_b = user_system::dir_size_bytes(&home);
-    let usage = user_system::bytes_to_human(usage_b);
     let quota = user_system::read_meta_value(&home, "QUOTA").unwrap_or_default();
-
     let catalog_path = cfg.runtime_root.join("client-users.json");
-    let catalog_status: String = if catalog_path.exists() {
-        match ClientUsersCatalog::load(&catalog_path) {
-            Ok(c) if c.get(username).is_some() => "presente".into(),
-            _ => "ausente".into(),
-        }
-    } else {
-        "indisponivel".into()
+    let catalog_status = match ClientUsersCatalog::load(&catalog_path).ok() {
+        Some(c) if c.get(username).is_some() => "presente",
+        _ => "ausente",
     };
-
-    let stat_info = std::fs::metadata(&home).ok();
-    let (owner, mode) = stat_info
-        .map(|m| {
-            use std::os::unix::fs::MetadataExt;
-            let uid = m.uid();
-            let gid = m.gid();
-            let mode = m.mode() & 0o7777;
-            let owner = std::process::Command::new("getent")
-                .args(["passwd", &uid.to_string()])
-                .output()
-                .ok()
-                .and_then(|o| {
-                    if o.status.success() {
-                        let s = String::from_utf8_lossy(&o.stdout);
-                        s.split(':').next().map(|s| s.to_string())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| uid.to_string());
-            let group = std::process::Command::new("getent")
-                .args(["group", &gid.to_string()])
-                .output()
-                .ok()
-                .and_then(|o| {
-                    if o.status.success() {
-                        let s = String::from_utf8_lossy(&o.stdout);
-                        s.split(':').next().map(|s| s.to_string())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| gid.to_string());
-            (format!("{}:{}", owner, group), format!("{:o}", mode))
-        })
-        .unwrap_or_else(|| ("?".into(), "?".into()));
-
+    let (owner, mode) = owner_mode(&home);
     let fstype = user_system::fs_type(&home).unwrap_or_else(|| "desconhecido".into());
     let mount = user_system::mount_info(&home).unwrap_or_else(|| "(indisponivel)".into());
     let qgroup = user_system::qgroup_info(&home).unwrap_or_else(|| "(indisponivel)".into());
@@ -492,27 +345,28 @@ pub async fn cmd_doctor(username: &str) -> Result<()> {
             "qgroup": qgroup,
         }))?;
     } else {
-        println!("  usuario: {}", username);
-        println!("  home:    {}", home.display());
-        println!("  filesystem: {}", fstype);
-        println!("  owner:  {}", owner);
-        println!("  modo:   {}", mode);
-        println!("  uso:    {}", usage);
-        println!("  quota:  {}", if quota.is_empty() { "—" } else { &quota });
+        println!("  usuario:     {}", username);
+        println!("  home:        {}", home.display());
+        println!("  filesystem:  {}", fstype);
+        println!("  owner:       {}", owner);
+        println!("  modo:        {}", mode);
+        println!("  uso:         {}", user_system::bytes_to_human(usage_b));
+        println!("  quota:       {}", if quota.is_empty() { "—" } else { &quota });
         println!("  catalog_cliente: {}", catalog_status);
         println!("  montagem:");
-        println!("{}", mount.lines().map(|l| format!("    {}", l)).collect::<Vec<_>>().join("\n"));
+        for line in mount.lines() {
+            println!("    {}", line);
+        }
         println!("  qgroup:");
-        println!("{}", qgroup.lines().map(|l| format!("    {}", l)).collect::<Vec<_>>().join("\n"));
+        for line in qgroup.lines() {
+            println!("    {}", line);
+        }
     }
-
     Ok(())
 }
 
-/// `gar user quota-sync` — sync btrfs qgroups with `.garos-home-meta`.
 pub async fn cmd_quota_sync() -> Result<()> {
     let cfg = Config::from_env()?;
-
     if !cfg.home_base.exists() {
         output::warn("storage de homes ausente");
         return Ok(());
@@ -520,42 +374,30 @@ pub async fn cmd_quota_sync() -> Result<()> {
     if !user_system::is_mountpoint(&cfg.home_base) {
         return Err(GarError::user("home nao esta montada"));
     }
-
-    user_system::enable_quotas(&cfg.home_base).await?;
+    let ops = FsOps::for_path(&cfg.home_base)?;
+    ops.enable_quotas(&cfg.home_base).await?;
 
     let mut synced = 0;
     let mut skipped = 0;
-
     for entry in std::fs::read_dir(&cfg.home_base)? {
-        let entry = entry?;
+        let Ok(entry) = entry else { continue };
         let path = entry.path();
         if !path.is_dir() {
             continue;
         }
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n,
-            None => continue,
-        };
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
         if name.starts_with('.') {
             continue;
         }
-
-        let quota = user_system::read_meta_value(&path, "QUOTA");
-        let quota = match quota {
-            Some(q) if !q.is_empty() => q,
-            _ => {
-                skipped += 1;
-                continue;
-            }
+        let Some(quota) = user_system::read_meta_value(&path, "QUOTA").filter(|q| !q.is_empty()) else {
+            skipped += 1;
+            continue;
         };
-
-        if let Err(e) = user_system::set_quota(&path, &quota).await {
-            output::warn(format!("falha ao sincronizar {}: {}", name, e));
-        } else {
-            synced += 1;
+        match ops.set_quota(&path, &quota).await {
+            Ok(()) => synced += 1,
+            Err(e) => output::warn(format!("falha ao sincronizar {}: {}", name, e)),
         }
     }
-
     output::ok(format!(
         "quotas sincronizadas ({} sincronizadas, {} sem metadata)",
         synced, skipped
@@ -563,152 +405,123 @@ pub async fn cmd_quota_sync() -> Result<()> {
     Ok(())
 }
 
-/// `gar user activity <name>` — login history from audit log.
 pub async fn cmd_activity(username: &str) -> Result<()> {
     let cfg = Config::from_env()?;
     let audit_file = cfg.audit_dir.join("login-history.json");
-
     if !audit_file.exists() {
         println!("sem registro de auditoria para {}", username);
         return Ok(());
     }
-
-    let bytes = std::fs::read(&audit_file)?;
-    let json: serde_json::Value = serde_json::from_slice(&bytes)?;
-
-    let sessions = json
-        .get("sessions")
-        .and_then(|s| s.get(username))
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!([]));
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(&audit_file)?)?;
+    let sessions = json.get("sessions").and_then(|s| s.get(username)).cloned().unwrap_or_else(|| serde_json::json!([]));
 
     if cfg.json_output {
-        output::json(&sessions)?;
-    } else {
-        if let Some(arr) = sessions.as_array() {
-            if arr.is_empty() {
-                println!("sem sessões registradas para {}", username);
-                return Ok(());
-            }
-            for s in arr {
-                let ts = s.get("timestamp").and_then(|v| v.as_str()).unwrap_or("?");
-                let action = s.get("action").and_then(|v| v.as_str()).unwrap_or("?");
-                let tty = s.get("tty").and_then(|v| v.as_str()).unwrap_or("?");
-                let ip = s.get("ip").and_then(|v| v.as_str()).unwrap_or("?");
-                println!("[{}] [{}] tty={} ip={}", ts, action, tty, ip);
-            }
-        } else {
-            println!("formato inesperado em audit log");
-        }
+        return output::json(&sessions);
+    }
+    let Some(arr) = sessions.as_array() else {
+        println!("formato inesperado em audit log");
+        return Ok(());
+    };
+    if arr.is_empty() {
+        println!("sem sessões registradas para {}", username);
+        return Ok(());
+    }
+    for s in arr {
+        let ts = s.get("timestamp").and_then(|v| v.as_str()).unwrap_or("?");
+        let action = s.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+        let tty = s.get("tty").and_then(|v| v.as_str()).unwrap_or("?");
+        let ip = s.get("ip").and_then(|v| v.as_str()).unwrap_or("?");
+        println!("[{}] [{}] tty={} ip={}", ts, action, tty, ip);
     }
     Ok(())
 }
 
-// ---------- Internal helpers ----------
-
-fn is_valid_username(s: &str) -> bool {
-    // [a-z_][a-z0-9_-]{0,30}
+fn validate_username(s: &str) -> Result<()> {
+    if s.is_empty() {
+        return Err(GarError::invalid_argument("uso: gar user add <nome> --quota 20G"));
+    }
     let mut chars = s.chars();
     match chars.next() {
         Some(c) if c.is_ascii_lowercase() || c == '_' => {}
-        _ => return false,
+        _ => return Err(GarError::invalid_argument(format!("nome de usuário inválido: {}", s))),
     }
     for c in chars {
         if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-') {
-            return false;
+            return Err(GarError::invalid_argument(format!("nome de usuário inválido: {}", s)));
         }
     }
-    s.len() <= 31
+    if s.len() > 31 {
+        return Err(GarError::invalid_argument(format!("nome de usuário inválido: {}", s)));
+    }
+    Ok(())
 }
 
 fn is_builtin_group(name: &str) -> bool {
-    matches!(
-        name,
-        "" | "audio"
-            | "nogroup"
-            | "root"
-            | "users"
-            | "video"
-            | "wheel"
-    )
+    matches!(name, "root" | "users" | "wheel" | "audio" | "video" | "nogroup")
 }
 
 fn human_to_bytes_check(human: &str) -> Result<u64> {
     user_system::human_to_bytes(human)
 }
 
-async fn create_home_dir(home: &Path, home_base: &Path) -> Result<()> {
-    let fs = user_system::detect_fs(home_base);
-    match fs {
-        FsType::Btrfs | FsType::Zfs => {
-            // Use subvolume/dataset abstraction
-            let _ = user_system::create_subvolume_like(home).await?;
-        }
-        FsType::Xfs => {
-            // XFS doesn't have subvolumes — just create the directory
-            std::fs::create_dir_all(home)?;
-        }
-        _ => {
-            // Fallback: plain directory
-            std::fs::create_dir_all(home)?;
-        }
-    }
-    Ok(())
+fn owner_mode(path: &Path) -> (String, String) {
+    let Ok(m) = std::fs::metadata(path) else {
+        return ("?".into(), "?".into());
+    };
+    let owner = name_from_getent("passwd", m.uid()).unwrap_or_else(|| m.uid().to_string());
+    let group = name_from_getent("group", m.gid()).unwrap_or_else(|| m.gid().to_string());
+    (format!("{}:{}", owner, group), format!("{:o}", m.mode() & 0o7777))
 }
 
-async fn bootstrap_home_tree(home: &Path) -> Result<()> {
-    for sub in [".config", ".cache", ".local/share", "Desktop", "Documents", "Downloads", "Music", "Pictures", "Videos"] {
-        std::fs::create_dir_all(home.join(sub))?;
-    }
-    // Permissions
-    std::fs::set_permissions(home, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
+fn name_from_getent(kind: &str, id: u32) -> Option<String> {
+    let output = std::process::Command::new("getent")
+        .args([kind, &id.to_string()])
+        .output()
+        .ok()?;
+    output.status.success().then(|| {
+        String::from_utf8_lossy(&output.stdout)
+            .split(':')
+            .next()
+            .unwrap_or("")
+            .to_string()
+    })
+}
+
+fn upsert_user_catalog(cfg: &Config, username: &str, hash: &str) -> Result<()> {
+    let path = cfg.runtime_root.join("client-users.json");
+    let mut catalog = ClientUsersCatalog::load(&path)?;
+    let extra_groups: Vec<String> = user_system::user_groups(username)
+        .into_iter()
+        .filter(|g| !is_builtin_group(g))
+        .collect();
+    catalog.upsert(
+        username,
+        ClientUserEntry {
+            uid: user_system::user_uid(username).unwrap_or(0),
+            hashed_password: hash.into(),
+            extra_groups,
+        },
+    );
+    catalog.save(&path)
+}
+
+fn upsert_user_groups(cfg: &Config, username: &str, group: &str) -> Result<()> {
+    let path = cfg.runtime_root.join("user-groups.json");
+    let mut catalog = UserGroupsCatalog::load(&path)?;
+    catalog.set_user_group(username, group);
+    catalog.save(&path)
+}
+
+fn bootstrap_home_tree(home: &Path) {
+    for sub in DEFAULT_USER_SUBDIRS {
+        let _ = std::fs::create_dir_all(home.join(sub));
+    }    set_mode(home, 0o700);
     for sub in [".config", ".cache", ".local"] {
-        std::fs::set_permissions(home.join(sub), std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
+        set_mode(&home.join(sub), 0o700);
     }
-    std::fs::set_permissions(home.join(".local/share"), std::os::unix::fs::PermissionsExt::from_mode(0o750))?;
-    Ok(())
+    set_mode(&home.join(".local/share"), 0o750);
 }
 
-#[allow(dead_code)]
-fn _silence_unused_hashmap_warning() -> HashMap<String, String> {
-    HashMap::new()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_valid_username() {
-        assert!(is_valid_username("alice"));
-        assert!(is_valid_username("user_1"));
-        assert!(is_valid_username("user-1"));
-        assert!(!is_valid_username("Alice")); // uppercase
-        assert!(!is_valid_username("1user")); // starts with digit
-        assert!(!is_valid_username("user with space"));
-        assert!(!is_valid_username(""));
-        assert!(!is_valid_username(&"a".repeat(40))); // too long
-    }
-
-    #[test]
-    fn test_is_builtin_group() {
-        assert!(is_builtin_group("root"));
-        assert!(is_builtin_group("users"));
-        assert!(is_builtin_group("audio"));
-        assert!(!is_builtin_group("garhq"));
-    }
-
-    #[test]
-    fn test_add_result_serialize() {
-        let r = AddResult {
-            username: "alice".into(),
-            home: "/srv/data/home/alice".into(),
-            quota: "20G".into(),
-            group: "default".into(),
-            catalog_updated: true,
-        };
-        let json = serde_json::to_string(&r).unwrap();
-        assert!(json.contains("alice"));
-        assert!(json.contains("20G"));
-    }
+fn set_mode(path: &Path, mode: u32) {
+    let _ = std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode));
 }
