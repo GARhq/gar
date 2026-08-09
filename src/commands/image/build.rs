@@ -60,7 +60,7 @@ pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Resul
         ipxe_url: format!("http://{}:{}/boot.ipxe", cfg.server_ip, cfg.http_port),
     };
 
-    if std::env::var("GAR_JSON_OUTPUT").is_ok() {
+    if cfg.json_output {
         output::json(&result)?;
     } else {
         output::ok(format!("current -> {}", build_id));
@@ -71,6 +71,17 @@ pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Resul
         println!("  Target : {}", result.target);
         println!();
         println!("  gar image rollback   - reverter se necessário");
+    }
+
+    // Reconcile statuses across all generations
+    if let Err(e) = crate::services::manifest::reconcile(
+        &cfg.images_root,
+        Some(&build_id),
+        None,
+        None,
+        None,
+    ) {
+        output::warn(format!("reconcile failed: {}", e));
     }
 
     Ok(())

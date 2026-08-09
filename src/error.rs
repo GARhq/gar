@@ -102,6 +102,26 @@ impl GarError {
         Self::Publish(msg.into())
     }
 
+    pub fn rollback(msg: impl Into<String>) -> Self {
+        Self::Rollback(msg.into())
+    }
+
+    pub fn gc(msg: impl Into<String>) -> Self {
+        Self::Gc(msg.into())
+    }
+
+    pub fn doctor(msg: impl Into<String>) -> Self {
+        Self::Doctor(msg.into())
+    }
+
+    pub fn user(msg: impl Into<String>) -> Self {
+        Self::User(msg.into())
+    }
+
+    pub fn group(msg: impl Into<String>) -> Self {
+        Self::Group(msg.into())
+    }
+
     /// Get process exit code for this error (Linux conventions).
     pub fn exit_code(&self) -> i32 {
         match self {

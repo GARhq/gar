@@ -230,7 +230,7 @@ impl ImageTarget {
 }
 
 /// Channel types.
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Channel {
     Generic,
     Lab,
