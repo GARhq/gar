@@ -7,11 +7,13 @@
 pub mod atomic_file;
 pub mod btrfs;
 pub mod channel;
+pub mod generations;
 pub mod git;
 pub mod group_system;
 pub mod lock;
 pub mod manifest;
 pub mod nix;
 pub mod nixos_rebuild;
+pub mod runtime_guard;
 pub mod shell;
 pub mod user_system;

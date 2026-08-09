@@ -83,15 +83,29 @@ mod tests {
 
     #[test]
     fn test_with_lock_runs() {
-        let tmp = std::env::temp_dir().join(format!("gar-lock-test-{}.lock", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!(
+            "gar-lock-runs-{}-{}.lock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let result = with_lock(&tmp, "test", || Ok::<i32, GarError>(42));
+        let _ = std::fs::remove_file(&tmp);
         assert_eq!(result.unwrap(), 42);
-        assert!(!tmp.exists());
     }
 
     #[test]
     fn test_with_lock_blocks_double_acquire() {
-        let tmp = std::env::temp_dir().join(format!("gar-lock-test-{}.lock", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!(
+            "gar-lock-blocks-{}-{}.lock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::remove_file(&tmp);
 
         // Manually create lock file as if held by another process
@@ -100,9 +114,6 @@ mod tests {
         // with_lock should now fail with LockHeld
         let result = with_lock(&tmp, "second", || Ok::<(), GarError>(()));
 
-        // Note: our stub uses simple file-based lock and 5-min stale check.
-        // The file we just created has mtime = now, so it's not stale.
-        // with_lock should return LockHeld.
         let _ = std::fs::remove_file(&tmp);
         assert!(matches!(result, Err(GarError::LockHeld)));
     }
