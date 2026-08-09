@@ -11,6 +11,7 @@ pub mod build;
 pub mod channel;
 pub mod client;
 pub mod filesystem;
+pub mod generation;
 pub mod generations;
 pub mod git;
 pub mod group_system;
