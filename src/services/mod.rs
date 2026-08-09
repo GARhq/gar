@@ -7,6 +7,7 @@
 pub mod atomic_file;
 pub mod branding;
 pub mod btrfs;
+pub mod build;
 pub mod channel;
 pub mod client;
 pub mod filesystem;

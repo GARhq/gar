@@ -14,6 +14,18 @@ pub fn target_channel(target: ImageTarget) -> Channel {
     }
 }
 
+/// Map a target string ("desktop-generic", "desktop-lab", etc) to its
+/// canonical hardware class. Returns "unknown" if the target is unrecognized.
+pub fn target_hardware_class_str(target: &str) -> &'static str {
+    match target {
+        "desktop-generic" => "physical-generic",
+        "desktop-lab" => "physical-lab",
+        "hyperv-debug" => "hyperv",
+        "rescue-minimal" => "rescue",
+        _ => "unknown",
+    }
+}
+
 /// Map a target to its hardware class.
 pub fn target_hardware_class(target: ImageTarget) -> &'static str {
     match target {
