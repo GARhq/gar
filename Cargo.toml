@@ -43,6 +43,10 @@ chrono = { version = "0.4", features = ["serde"] }
 # UUID for build IDs (later)
 uuid = { version = "1.11", features = ["v4"], optional = true }
 
+# Real flock(2) syscalls for global lock (replaces racy mkdir-based mutex)
+nix = { version = "0.29", default-features = false, features = ["fs", "feature"] }
+libc = "0.2"
+
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"

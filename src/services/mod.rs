@@ -5,8 +5,10 @@
 //! so commands can stay focused on orchestration logic.
 
 pub mod atomic_file;
+pub mod branding;
 pub mod btrfs;
 pub mod channel;
+pub mod client;
 pub mod filesystem;
 pub mod generations;
 pub mod git;

@@ -36,8 +36,8 @@ pub enum GarError {
     #[error("Validation failed: {0}")]
     Validation(String),
 
-    #[error("Lock held by another operation")]
-    LockHeld,
+    #[error("Lock held by another operation: {0}")]
+    LockHeld(String),
 
     #[error("Parse error: {0}")]
     Parse(String),
@@ -122,6 +122,10 @@ impl GarError {
         Self::Group(msg.into())
     }
 
+    pub fn lock(msg: impl Into<String>) -> Self {
+        Self::LockHeld(msg.into())
+    }
+
     /// Get process exit code for this error (Linux conventions).
     pub fn exit_code(&self) -> i32 {
         match self {
@@ -129,7 +133,7 @@ impl GarError {
             Self::PermissionDenied(_) => 13,
             Self::CommandNotFound(_) => 127,
             Self::CommandFailed { code, .. } => *code,
-            Self::LockHeld => 75,
+            Self::LockHeld(_) => 75,
             _ => 1,
         }
     }
