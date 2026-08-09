@@ -7,6 +7,7 @@
 pub mod atomic_file;
 pub mod btrfs;
 pub mod channel;
+pub mod filesystem;
 pub mod generations;
 pub mod git;
 pub mod group_system;

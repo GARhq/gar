@@ -1,6 +1,9 @@
 //! User system operations (useradd, usermod, userdel, quota, catalog).
 //!
 //! Replaces user management helpers from ragos-cli.nix.
+//!
+//! Filesystem operations (subvolume, snapshot, quota) are abstracted via
+//! `services::filesystem::FsOps` — supports BTRFS, XFS, ZFS automatically.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -8,6 +11,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GarError, Result};
+pub use crate::services::filesystem::{
+    bytes_to_human, detect as detect_fs, human_to_bytes, require_supported, FsOps, FsType,
+};
 
 /// Create a system user (no password, no shell) — bootstrap user.
 pub async fn useradd_system(username: &str, home: &str) -> Result<()> {
@@ -119,22 +125,11 @@ pub fn user_shadow_hash(username: &str) -> Option<String> {
 
 /// Get filesystem type of a path.
 pub fn fs_type(path: &Path) -> Option<String> {
-    let output = std::process::Command::new("findmnt")
-        .arg("-n")
-        .arg("-o")
-        .arg("FSTYPE")
-        .arg("--target")
-        .arg(path)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if s.is_empty() {
+    let fs = detect_fs(path);
+    if fs == FsType::Unknown {
         None
     } else {
-        Some(s)
+        Some(fs.as_str().to_string())
     }
 }
 
@@ -150,7 +145,22 @@ pub fn is_mountpoint(path: &Path) -> bool {
 
 /// Check if a path is on BTRFS.
 pub fn is_btrfs(path: &Path) -> bool {
-    fs_type(path).as_deref() == Some("btrfs")
+    detect_fs(path) == FsType::Btrfs
+}
+
+/// Check if a path is on XFS.
+pub fn is_xfs(path: &Path) -> bool {
+    detect_fs(path) == FsType::Xfs
+}
+
+/// Check if a path is on ZFS.
+pub fn is_zfs(path: &Path) -> bool {
+    detect_fs(path) == FsType::Zfs
+}
+
+/// Check if a path is on a filesystem that supports per-directory quota.
+pub fn supports_quota(path: &Path) -> bool {
+    detect_fs(path).supports_quota()
 }
 
 /// Get the size of a directory in bytes.
@@ -171,74 +181,46 @@ pub fn dir_size_bytes(path: &Path) -> u64 {
     }
 }
 
-/// Enable BTRFS quotas on a mountpoint.
-pub async fn enable_btrfs_quotas(path: &Path) -> Result<()> {
-    let _ = crate::services::shell::run_success(
-        "btrfs",
-        &["quota", "enable", &path.display().to_string()],
-    )
-    .await?;
-    Ok(())
+/// Enable per-directory quotas on a mountpoint.
+///
+/// Delegates to BTRFS/XFS/ZFS implementation based on detected filesystem.
+pub async fn enable_quotas(path: &Path) -> Result<()> {
+    let ops = get_ops_for(path)?;
+    ops.enable_quotas(path).await
 }
 
-/// Apply a qgroup limit (human-readable, e.g. "20G") to a path.
+/// Apply a qgroup/project quota (human-readable, e.g. "20G") to a path.
+///
+/// Delegates to BTRFS/XFS/ZFS implementation based on detected filesystem.
 pub async fn set_quota(path: &Path, quota: &str) -> Result<()> {
-    // Convert human-readable to bytes (numfmt)
-    let bytes = human_to_bytes(quota)?;
-    let bytes_str = bytes.to_string();
-
-    let _ = crate::services::shell::run_success(
-        "btrfs",
-        &[
-            "qgroup",
-            "limit",
-            &bytes_str,
-            &path.display().to_string(),
-        ],
-    )
-    .await?;
-    Ok(())
+    let ops = get_ops_for(path)?;
+    ops.set_quota(path, quota).await
 }
 
-/// Convert human-readable (20G, 1T, 500M) to bytes.
-pub fn human_to_bytes(human: &str) -> Result<u64> {
-    let output = std::process::Command::new("numfmt")
-        .args(["--from=iec", human])
-        .output()?;
-    if !output.status.success() {
-        return Err(GarError::User(format!("quota invalida: {}", human)));
-    }
-    let s = String::from_utf8_lossy(&output.stdout);
-    s.trim()
-        .parse()
-        .map_err(|e| GarError::User(format!("falha ao parsear bytes: {}", e)))
+/// Create a subvolume-like entity at `path` (BTRFS subvolume, ZFS dataset, XFS dir).
+pub async fn create_subvolume_like(path: &Path) -> Result<()> {
+    let ops = get_ops_for(path)?;
+    ops.create_subvolume(path).await
 }
 
-/// Convert bytes to human-readable (IEC, suffix B).
-pub fn bytes_to_human(bytes: u64) -> String {
-    let output = std::process::Command::new("numfmt")
-        .args(["--to=iec-i", "--suffix=B", &bytes.to_string()])
-        .output()
-        .ok();
-    match output {
-        Some(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).trim().to_string()
-        }
-        _ => format!("{}B", bytes),
-    }
+/// Create a read-only snapshot of `src` at `dst` (BTRFS/ZFS only).
+pub async fn snapshot_readonly(src: &Path, dst: &Path) -> Result<()> {
+    let ops = get_ops_for(src)?;
+    ops.snapshot_readonly(src, dst).await
 }
 
-/// Get qgroup info for a path.
+/// Get qgroup/usage info for a path.
 pub fn qgroup_info(path: &Path) -> Option<String> {
-    let output = std::process::Command::new("btrfs")
-        .args(["qgroup", "show", "-f", &path.display().to_string()])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+    FsOps::for_path(path).ok().and_then(|ops| ops.qgroup_info(path))
 }
+
+/// Get the right FsOps implementation for a path.
+fn get_ops_for(path: &Path) -> Result<FsOps> {
+    FsOps::for_path(path)
+}
+
+// Keep legacy names as aliases for backward compatibility.
+pub use enable_quotas as enable_btrfs_quotas;
 
 /// Get the mount info line for a path.
 pub fn mount_info(path: &Path) -> Option<String> {

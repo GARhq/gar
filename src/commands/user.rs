@@ -16,6 +16,7 @@ use crate::cli::UserCmd;
 use crate::config::Config;
 use crate::error::{GarError, Result};
 use crate::output;
+use crate::services::filesystem::FsType;
 use crate::services::user_system::{
     self, ClientUserEntry, ClientUsersCatalog, HomeMeta, UserGroupsCatalog,
 };
@@ -91,9 +92,9 @@ pub async fn cmd_add(
         )));
     }
 
-    if !user_system::is_btrfs(&cfg.home_base) {
+    if !user_system::supports_quota(&cfg.home_base) {
         return Err(GarError::user(format!(
-            "storage de homes em {} nao e btrfs",
+            "storage de homes em {} nao suporta per-directory quota (use btrfs/xfs/zfs)",
             cfg.home_base.display()
         )));
     }
@@ -124,8 +125,8 @@ pub async fn cmd_add(
     // 4. Bootstrap home tree
     bootstrap_home_tree(&home).await?;
 
-    // 5. Enable btrfs quotas + apply quota
-    user_system::enable_btrfs_quotas(&cfg.home_base).await?;
+    // 5. Enable quotas + apply quota (BTRFS/XFS/ZFS detected automatically)
+    user_system::enable_quotas(&cfg.home_base).await?;
     user_system::set_quota(&home, quota).await?;
 
     // 6. Write metadata
@@ -216,7 +217,7 @@ pub async fn cmd_resize(username: &str, quota: &str, force: bool) -> Result<()> 
         )));
     }
 
-    user_system::enable_btrfs_quotas(&cfg.home_base).await?;
+    user_system::enable_quotas(&cfg.home_base).await?;
     user_system::set_quota(&home, quota).await?;
 
     let meta = HomeMeta {
@@ -375,21 +376,11 @@ pub async fn cmd_delete(username: &str, archive: bool) -> Result<()> {
 
     std::fs::create_dir_all(&cfg.home_archive_base)?;
 
-    // BTRFS snapshot (read-only) before move
-    if user_system::is_btrfs(&home) {
+    // Snapshot via filesystem abstraction (BTRFS/ZFS only)
+    if user_system::supports_quota(&home) {
         std::fs::create_dir_all(&cfg.home_snapshot_base)?;
         let snap_path = cfg.home_snapshot_base.join(format!("{}-{}", username, stamp));
-        let _ = crate::services::shell::run_success(
-            "btrfs",
-            &[
-                "subvolume",
-                "snapshot",
-                "-r",
-                &home.display().to_string(),
-                &snap_path.display().to_string(),
-            ],
-        )
-        .await;
+        let _ = user_system::snapshot_readonly(&home, &snap_path).await;
     }
 
     // Move home → archive
@@ -530,7 +521,7 @@ pub async fn cmd_quota_sync() -> Result<()> {
         return Err(GarError::user("home nao esta montada"));
     }
 
-    user_system::enable_btrfs_quotas(&cfg.home_base).await?;
+    user_system::enable_quotas(&cfg.home_base).await?;
 
     let mut synced = 0;
     let mut skipped = 0;
@@ -647,14 +638,20 @@ fn human_to_bytes_check(human: &str) -> Result<u64> {
 }
 
 async fn create_home_dir(home: &Path, home_base: &Path) -> Result<()> {
-    if user_system::is_btrfs(home_base) {
-        let _ = crate::services::shell::run_success(
-            "btrfs",
-            &["subvolume", "create", &home.display().to_string()],
-        )
-        .await?;
-    } else {
-        std::fs::create_dir_all(home)?;
+    let fs = user_system::detect_fs(home_base);
+    match fs {
+        FsType::Btrfs | FsType::Zfs => {
+            // Use subvolume/dataset abstraction
+            let _ = user_system::create_subvolume_like(home).await?;
+        }
+        FsType::Xfs => {
+            // XFS doesn't have subvolumes — just create the directory
+            std::fs::create_dir_all(home)?;
+        }
+        _ => {
+            // Fallback: plain directory
+            std::fs::create_dir_all(home)?;
+        }
     }
     Ok(())
 }
