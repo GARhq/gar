@@ -145,12 +145,15 @@ fn atomic_symlink(target: &Path, link_path: &Path) -> Result<()> {
         std::fs::remove_file(link_path)?;
     }
     // Create temp symlink in same dir (for atomic rename)
-    let parent = link_path.parent().ok_or_else(|| {
-        GarError::Rollback(format!("link sem parent: {}", link_path.display()))
-    })?;
+    let parent = link_path
+        .parent()
+        .ok_or_else(|| GarError::Rollback(format!("link sem parent: {}", link_path.display())))?;
     let tmp = parent.join(format!(
         ".{}.tmp.{}",
-        link_path.file_name().and_then(|n| n.to_str()).unwrap_or("link"),
+        link_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("link"),
         std::process::id()
     ));
     std::os::unix::fs::symlink(target, &tmp)?;

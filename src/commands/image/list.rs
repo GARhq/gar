@@ -29,7 +29,10 @@ pub async fn run() -> Result<()> {
     let cfg = Config::from_env()?;
 
     if !cfg.images_root.exists() {
-        output::warn(format!("Nenhuma versão publicada ainda ({} não existe).", cfg.images_root.display()));
+        output::warn(format!(
+            "Nenhuma versão publicada ainda ({} não existe).",
+            cfg.images_root.display()
+        ));
         return Ok(());
     }
 
@@ -53,26 +56,19 @@ pub async fn run() -> Result<()> {
         };
 
         let size = dir_size(&path);
-        let (timestamp, target, channel, hardware_class, status) =
-            match manifest::read(&path) {
-                Ok(m) => (
-                    m.timestamp,
-                    m.target,
-                    m.channel,
-                    m.hardware_class,
-                    m.status,
-                ),
-                Err(_) => {
-                    // Manifest missing — show unknown
-                    (
-                        "—".into(),
-                        "—".into(),
-                        "—".into(),
-                        "—".into(),
-                        Status::Inactive,
-                    )
-                }
-            };
+        let (timestamp, target, channel, hardware_class, status) = match manifest::read(&path) {
+            Ok(m) => (m.timestamp, m.target, m.channel, m.hardware_class, m.status),
+            Err(_) => {
+                // Manifest missing — show unknown
+                (
+                    "—".into(),
+                    "—".into(),
+                    "—".into(),
+                    "—".into(),
+                    Status::Inactive,
+                )
+            }
+        };
 
         // Override status from pointers if present (more authoritative)
         let status = if Some(&version) == current.as_ref() {
@@ -164,9 +160,11 @@ fn dir_size(path: &Path) -> String {
         .output()
         .ok();
     match output {
-        Some(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).split_whitespace().next().unwrap_or("?").to_string()
-        }
+        Some(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .split_whitespace()
+            .next()
+            .unwrap_or("?")
+            .to_string(),
         _ => "?".into(),
     }
 }

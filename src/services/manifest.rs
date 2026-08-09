@@ -222,7 +222,8 @@ mod tests {
 
     #[test]
     fn test_validate_passes_for_nix_path() {
-        let tmp = std::env::temp_dir().join(format!("gar-manifest-validate-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("gar-manifest-validate-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let m = sample_manifest();
         write(&tmp, &m).unwrap();

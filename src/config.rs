@@ -95,7 +95,11 @@ impl Config {
 
     /// Get the `installable` reference for nixos-rebuild (e.g. `git+file:///etc/gar#srv-gar`).
     pub fn installable(&self) -> String {
-        format!("git+file://{}#{}", self.flake_path.display(), self.target_host)
+        format!(
+            "git+file://{}#{}",
+            self.flake_path.display(),
+            self.target_host
+        )
     }
 }
 
@@ -112,27 +116,27 @@ fn env_bool(name: &str, default: bool) -> bool {
 
 fn env_u16(name: &str, default: u16) -> Result<u16> {
     match std::env::var(name) {
-        Ok(v) => v.parse().map_err(|_| {
-            GarError::config(format!("env var {}={} is not a valid u16", name, v))
-        }),
+        Ok(v) => v
+            .parse()
+            .map_err(|_| GarError::config(format!("env var {}={} is not a valid u16", name, v))),
         Err(_) => Ok(default),
     }
 }
 
 fn env_u32(name: &str, default: u32) -> Result<u32> {
     match std::env::var(name) {
-        Ok(v) => v.parse().map_err(|_| {
-            GarError::config(format!("env var {}={} is not a valid u32", name, v))
-        }),
+        Ok(v) => v
+            .parse()
+            .map_err(|_| GarError::config(format!("env var {}={} is not a valid u32", name, v))),
         Err(_) => Ok(default),
     }
 }
 
 fn env_u64(name: &str, default: u64) -> Result<u64> {
     match std::env::var(name) {
-        Ok(v) => v.parse().map_err(|_| {
-            GarError::config(format!("env var {}={} is not a valid u64", name, v))
-        }),
+        Ok(v) => v
+            .parse()
+            .map_err(|_| GarError::config(format!("env var {}={} is not a valid u64", name, v))),
         Err(_) => Ok(default),
     }
 }

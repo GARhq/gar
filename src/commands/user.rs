@@ -5,14 +5,16 @@ use std::path::Path;
 
 use chrono::Utc;
 use owo_colors::OwoColorize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::cli::UserCmd;
 use crate::config::Config;
 use crate::error::{GarError, Result};
 use crate::output;
 use crate::services::filesystem::FsOps;
-use crate::services::user_system::{self, ClientUserEntry, ClientUsersCatalog, HomeMeta, UserGroupsCatalog};
+use crate::services::user_system::{
+    self, ClientUserEntry, ClientUsersCatalog, HomeMeta, UserGroupsCatalog,
+};
 
 const DEFAULT_USER_SUBDIRS: &[&str] = &[
     ".config",
@@ -28,7 +30,13 @@ const DEFAULT_USER_SUBDIRS: &[&str] = &[
 
 pub async fn dispatch(cmd: UserCmd) -> Result<()> {
     match cmd {
-        UserCmd::Add { username, quota, password, password_hash, group } => {
+        UserCmd::Add {
+            username,
+            quota,
+            password,
+            password_hash,
+            group,
+        } => {
             cmd_add(
                 &username,
                 quota.as_deref(),
@@ -38,7 +46,11 @@ pub async fn dispatch(cmd: UserCmd) -> Result<()> {
             )
             .await
         }
-        UserCmd::Resize { username, quota, force } => cmd_resize(&username, &quota, force).await,
+        UserCmd::Resize {
+            username,
+            quota,
+            force,
+        } => cmd_resize(&username, &quota, force).await,
         UserCmd::List => cmd_list().await,
         UserCmd::Delete { username, archive } => cmd_delete(&username, archive).await,
         UserCmd::Doctor { username } => cmd_doctor(&username).await,
@@ -88,7 +100,9 @@ pub async fn cmd_add(
 
     let final_hash = match password {
         Some(plain) => user_system::hash_password(plain)?,
-        None => password_hash.map(String::from).unwrap_or_else(|| "!".into()),
+        None => password_hash
+            .map(String::from)
+            .unwrap_or_else(|| "!".into()),
     };
 
     user_system::useradd_system(username, &home.display().to_string()).await?;
@@ -146,7 +160,11 @@ pub async fn cmd_resize(username: &str, quota: &str, force: bool) -> Result<()> 
     let cfg = Config::from_env()?;
     let home = cfg.home_base.join(username);
     if !home.exists() {
-        return Err(GarError::user(format!("home ausente para {}: {}", username, home.display())));
+        return Err(GarError::user(format!(
+            "home ausente para {}: {}",
+            username,
+            home.display()
+        )));
     }
     let quota_b = human_to_bytes_check(quota)?;
     let usage_b = user_system::dir_size_bytes(&home);
@@ -175,20 +193,32 @@ pub async fn cmd_resize(username: &str, quota: &str, force: bool) -> Result<()> 
     )?;
 
     if cfg.json_output {
-        output::json(&serde_json::json!({
-            "username": username,
-            "home": home.display().to_string(),
-            "old_quota": current,
-            "new_quota": quota,
-            "usage_bytes": usage_b,
-        }))?;
+        output::json(&ResizeResult {
+            username: username.into(),
+            home: home.display().to_string(),
+            old_quota: current,
+            new_quota: quota.into(),
+            usage_bytes: usage_b,
+        })?;
     } else {
         output::ok(format!("usuário redimensionado: {}", username));
         println!("  uso atual:     {}", user_system::bytes_to_human(usage_b));
-        println!("  quota anterior: {}", if current.is_empty() { "—" } else { &current });
+        println!(
+            "  quota anterior: {}",
+            if current.is_empty() { "—" } else { &current }
+        );
         println!("  nova quota:    {}", quota);
     }
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct ResizeResult {
+    username: String,
+    home: String,
+    old_quota: String,
+    new_quota: String,
+    usage_bytes: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -205,7 +235,10 @@ pub struct UserRow {
 pub async fn cmd_list() -> Result<()> {
     let cfg = Config::from_env()?;
     if !cfg.home_base.exists() {
-        output::warn(format!("storage de homes ausente em {}", cfg.home_base.display()));
+        output::warn(format!(
+            "storage de homes ausente em {}",
+            cfg.home_base.display()
+        ));
         return Ok(());
     }
     if !user_system::is_mountpoint(&cfg.home_base) {
@@ -226,14 +259,26 @@ pub async fn cmd_list() -> Result<()> {
             }
             let usage_b = user_system::dir_size_bytes(&p);
             let quota_str = user_system::read_meta_value(&p, "QUOTA").unwrap_or_default();
-            let quota_b = if quota_str.is_empty() { 0 } else { human_to_bytes_check(&quota_str).unwrap_or(0) };
+            let quota_b = if quota_str.is_empty() {
+                0
+            } else {
+                human_to_bytes_check(&quota_str).unwrap_or(0)
+            };
             Some(UserRow {
                 username: name.into(),
                 usage: user_system::bytes_to_human(usage_b),
                 usage_bytes: usage_b,
-                quota: if quota_str.is_empty() { "—".into() } else { quota_str },
+                quota: if quota_str.is_empty() {
+                    "—".into()
+                } else {
+                    quota_str
+                },
                 quota_bytes: quota_b,
-                percent: if quota_b > 0 { format!("{}%", usage_b * 100 / quota_b) } else { "—".into() },
+                percent: if quota_b > 0 {
+                    format!("{}%", usage_b * 100 / quota_b)
+                } else {
+                    "—".into()
+                },
                 home: p.display().to_string(),
             })
         })
@@ -252,7 +297,11 @@ pub async fn cmd_list() -> Result<()> {
     println!();
     println!(
         "  {:<20} {:<12} {:<10} {:<8} {}",
-        "USERNAME".bold(), "USO".bold(), "QUOTA".bold(), "%".bold(), "HOME".bold()
+        "USERNAME".bold(),
+        "USO".bold(),
+        "QUOTA".bold(),
+        "%".bold(),
+        "HOME".bold()
     );
     for row in &rows {
         println!(
@@ -267,22 +316,34 @@ pub async fn cmd_list() -> Result<()> {
 pub async fn cmd_delete(username: &str, archive: bool) -> Result<()> {
     let cfg = Config::from_env()?;
     if !archive {
-        return Err(GarError::user("delete sem --archive e proibido (seguranca)"));
+        return Err(GarError::user(
+            "delete sem --archive e proibido (seguranca)",
+        ));
     }
     if username.is_empty() {
-        return Err(GarError::invalid_argument("uso: gar user delete <nome> --archive"));
+        return Err(GarError::invalid_argument(
+            "uso: gar user delete <nome> --archive",
+        ));
     }
     let home = cfg.home_base.join(username);
     if !home.exists() {
-        return Err(GarError::user(format!("home ausente para {}: {}", username, home.display())));
+        return Err(GarError::user(format!(
+            "home ausente para {}: {}",
+            username,
+            home.display()
+        )));
     }
 
     let stamp = Utc::now().format("%Y%m%d-%H%M%S").to_string();
-    let archive_path = cfg.home_archive_base.join(format!("{}-{}", username, stamp));
+    let archive_path = cfg
+        .home_archive_base
+        .join(format!("{}-{}", username, stamp));
     std::fs::create_dir_all(&cfg.home_archive_base)?;
 
     if let Ok(ops) = FsOps::for_path(&home) {
-        let snap_path = cfg.home_snapshot_base.join(format!("{}-{}", username, stamp));
+        let snap_path = cfg
+            .home_snapshot_base
+            .join(format!("{}-{}", username, stamp));
         std::fs::create_dir_all(&cfg.home_snapshot_base)?;
         let _ = ops.snapshot_readonly(&home, &snap_path).await;
     }
@@ -298,15 +359,21 @@ pub async fn cmd_delete(username: &str, archive: bool) -> Result<()> {
     }
 
     if cfg.json_output {
-        output::json(&serde_json::json!({
-            "username": username,
-            "archive": archive_path.display().to_string(),
-        }))?;
+        output::json(&DeleteResult {
+            username: username.into(),
+            archive: archive_path.display().to_string(),
+        })?;
     } else {
         output::ok(format!("usuário arquivado: {}", username));
         println!("  home arquivada em: {}", archive_path.display());
     }
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct DeleteResult {
+    username: String,
+    archive: String,
 }
 
 pub async fn cmd_doctor(username: &str) -> Result<()> {
@@ -316,7 +383,11 @@ pub async fn cmd_doctor(username: &str) -> Result<()> {
     let cfg = Config::from_env()?;
     let home = cfg.home_base.join(username);
     if !home.exists() {
-        return Err(GarError::user(format!("home ausente para {}: {}", username, home.display())));
+        return Err(GarError::user(format!(
+            "home ausente para {}: {}",
+            username,
+            home.display()
+        )));
     }
 
     let usage_b = user_system::dir_size_bytes(&home);
@@ -332,18 +403,18 @@ pub async fn cmd_doctor(username: &str) -> Result<()> {
     let qgroup = user_system::qgroup_info(&home).unwrap_or_else(|| "(indisponivel)".into());
 
     if cfg.json_output {
-        output::json(&serde_json::json!({
-            "username": username,
-            "home": home.display().to_string(),
-            "filesystem": fstype,
-            "owner": owner,
-            "mode": mode,
-            "usage_bytes": usage_b,
-            "quota": quota,
-            "catalog": catalog_status,
-            "mount": mount,
-            "qgroup": qgroup,
-        }))?;
+        output::json(&DoctorReport {
+            username: username.into(),
+            home: home.display().to_string(),
+            filesystem: fstype,
+            owner,
+            mode,
+            usage_bytes: usage_b,
+            quota,
+            catalog: catalog_status.into(),
+            mount,
+            qgroup,
+        })?;
     } else {
         println!("  usuario:     {}", username);
         println!("  home:        {}", home.display());
@@ -351,7 +422,10 @@ pub async fn cmd_doctor(username: &str) -> Result<()> {
         println!("  owner:       {}", owner);
         println!("  modo:        {}", mode);
         println!("  uso:         {}", user_system::bytes_to_human(usage_b));
-        println!("  quota:       {}", if quota.is_empty() { "—" } else { &quota });
+        println!(
+            "  quota:       {}",
+            if quota.is_empty() { "—" } else { &quota }
+        );
         println!("  catalog_cliente: {}", catalog_status);
         println!("  montagem:");
         for line in mount.lines() {
@@ -363,6 +437,20 @@ pub async fn cmd_doctor(username: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct DoctorReport {
+    username: String,
+    home: String,
+    filesystem: String,
+    owner: String,
+    mode: String,
+    usage_bytes: u64,
+    quota: String,
+    catalog: String,
+    mount: String,
+    qgroup: String,
 }
 
 pub async fn cmd_quota_sync() -> Result<()> {
@@ -385,11 +473,14 @@ pub async fn cmd_quota_sync() -> Result<()> {
         if !path.is_dir() {
             continue;
         }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
         if name.starts_with('.') {
             continue;
         }
-        let Some(quota) = user_system::read_meta_value(&path, "QUOTA").filter(|q| !q.is_empty()) else {
+        let Some(quota) = user_system::read_meta_value(&path, "QUOTA").filter(|q| !q.is_empty())
+        else {
             skipped += 1;
             continue;
         };
@@ -413,51 +504,71 @@ pub async fn cmd_activity(username: &str) -> Result<()> {
         return Ok(());
     }
     let json: serde_json::Value = serde_json::from_slice(&std::fs::read(&audit_file)?)?;
-    let sessions = json.get("sessions").and_then(|s| s.get(username)).cloned().unwrap_or_else(|| serde_json::json!([]));
+    let sessions: Vec<Session> = json
+        .get("sessions")
+        .and_then(|s| s.get(username))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
 
     if cfg.json_output {
         return output::json(&sessions);
     }
-    let Some(arr) = sessions.as_array() else {
-        println!("formato inesperado em audit log");
-        return Ok(());
-    };
-    if arr.is_empty() {
+    if sessions.is_empty() {
         println!("sem sessões registradas para {}", username);
         return Ok(());
     }
-    for s in arr {
-        let ts = s.get("timestamp").and_then(|v| v.as_str()).unwrap_or("?");
-        let action = s.get("action").and_then(|v| v.as_str()).unwrap_or("?");
-        let tty = s.get("tty").and_then(|v| v.as_str()).unwrap_or("?");
-        let ip = s.get("ip").and_then(|v| v.as_str()).unwrap_or("?");
-        println!("[{}] [{}] tty={} ip={}", ts, action, tty, ip);
+    for s in &sessions {
+        println!("[{}] [{}] tty={} ip={}", s.timestamp, s.action, s.tty, s.ip);
     }
     Ok(())
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Session {
+    timestamp: String,
+    action: String,
+    tty: String,
+    ip: String,
+}
+
 fn validate_username(s: &str) -> Result<()> {
     if s.is_empty() {
-        return Err(GarError::invalid_argument("uso: gar user add <nome> --quota 20G"));
+        return Err(GarError::invalid_argument(
+            "uso: gar user add <nome> --quota 20G",
+        ));
     }
     let mut chars = s.chars();
     match chars.next() {
         Some(c) if c.is_ascii_lowercase() || c == '_' => {}
-        _ => return Err(GarError::invalid_argument(format!("nome de usuário inválido: {}", s))),
+        _ => {
+            return Err(GarError::invalid_argument(format!(
+                "nome de usuário inválido: {}",
+                s
+            )))
+        }
     }
     for c in chars {
         if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-') {
-            return Err(GarError::invalid_argument(format!("nome de usuário inválido: {}", s)));
+            return Err(GarError::invalid_argument(format!(
+                "nome de usuário inválido: {}",
+                s
+            )));
         }
     }
     if s.len() > 31 {
-        return Err(GarError::invalid_argument(format!("nome de usuário inválido: {}", s)));
+        return Err(GarError::invalid_argument(format!(
+            "nome de usuário inválido: {}",
+            s
+        )));
     }
     Ok(())
 }
 
 fn is_builtin_group(name: &str) -> bool {
-    matches!(name, "root" | "users" | "wheel" | "audio" | "video" | "nogroup")
+    matches!(
+        name,
+        "root" | "users" | "wheel" | "audio" | "video" | "nogroup"
+    )
 }
 
 fn human_to_bytes_check(human: &str) -> Result<u64> {
@@ -470,7 +581,10 @@ fn owner_mode(path: &Path) -> (String, String) {
     };
     let owner = name_from_getent("passwd", m.uid()).unwrap_or_else(|| m.uid().to_string());
     let group = name_from_getent("group", m.gid()).unwrap_or_else(|| m.gid().to_string());
-    (format!("{}:{}", owner, group), format!("{:o}", m.mode() & 0o7777))
+    (
+        format!("{}:{}", owner, group),
+        format!("{:o}", m.mode() & 0o7777),
+    )
 }
 
 fn name_from_getent(kind: &str, id: u32) -> Option<String> {
@@ -515,7 +629,8 @@ fn upsert_user_groups(cfg: &Config, username: &str, group: &str) -> Result<()> {
 fn bootstrap_home_tree(home: &Path) {
     for sub in DEFAULT_USER_SUBDIRS {
         let _ = std::fs::create_dir_all(home.join(sub));
-    }    set_mode(home, 0o700);
+    }
+    set_mode(home, 0o700);
     for sub in [".config", ".cache", ".local"] {
         set_mode(&home.join(sub), 0o700);
     }

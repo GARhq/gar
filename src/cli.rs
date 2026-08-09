@@ -281,13 +281,19 @@ mod tests {
         .expect("should parse");
 
         assert!(!cli.json);
-        assert!(matches!(cli.command, Command::Image(ImageCmd::Build { .. })));
+        assert!(matches!(
+            cli.command,
+            Command::Image(ImageCmd::Build { .. })
+        ));
     }
 
     #[test]
     fn test_cli_image_build_deploy_alias() {
         let cli = Cli::try_parse_from(["gar", "image", "deploy"]).expect("alias should work");
-        assert!(matches!(cli.command, Command::Image(ImageCmd::Build { .. })));
+        assert!(matches!(
+            cli.command,
+            Command::Image(ImageCmd::Build { .. })
+        ));
     }
 
     #[test]

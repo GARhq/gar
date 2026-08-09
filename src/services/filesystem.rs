@@ -55,7 +55,16 @@ impl FsType {
 }
 
 pub fn detect(path: &Path) -> FsType {
-    let Some(s) = cmd_stdout("findmnt", &["-n", "-o", "FSTYPE", "--target", &path.display().to_string()]) else {
+    let Some(s) = cmd_stdout(
+        "findmnt",
+        &[
+            "-n",
+            "-o",
+            "FSTYPE",
+            "--target",
+            &path.display().to_string(),
+        ],
+    ) else {
         return FsType::Unknown;
     };
     FsType::from_str(s.trim())
@@ -94,11 +103,21 @@ impl FsOps {
 
     pub async fn create_subvolume(&self, path: &Path) -> Result<()> {
         match self {
-            Self::Btrfs => sh("btrfs", &["subvolume", "create", &path.display().to_string()]).await,
+            Self::Btrfs => {
+                sh(
+                    "btrfs",
+                    &["subvolume", "create", &path.display().to_string()],
+                )
+                .await
+            }
             Self::Zfs => {
                 let dataset = path_to_dataset(path)?;
                 sh("zfs", &["create", &dataset]).await?;
-                sh("zfs", &["set", &format!("mountpoint={}", path.display()), &dataset]).await
+                sh(
+                    "zfs",
+                    &["set", &format!("mountpoint={}", path.display()), &dataset],
+                )
+                .await
             }
             Self::Xfs => {
                 std::fs::create_dir_all(path)?;
@@ -109,17 +128,19 @@ impl FsOps {
 
     pub async fn snapshot_readonly(&self, src: &Path, dst: &Path) -> Result<()> {
         match self {
-            Self::Btrfs => sh(
-                "btrfs",
-                &[
-                    "subvolume",
-                    "snapshot",
-                    "-r",
-                    &src.display().to_string(),
-                    &dst.display().to_string(),
-                ],
-            )
-            .await,
+            Self::Btrfs => {
+                sh(
+                    "btrfs",
+                    &[
+                        "subvolume",
+                        "snapshot",
+                        "-r",
+                        &src.display().to_string(),
+                        &dst.display().to_string(),
+                    ],
+                )
+                .await
+            }
             Self::Zfs => {
                 let dataset = path_to_dataset(src)?;
                 let snap = format!(
@@ -137,12 +158,24 @@ impl FsOps {
 
     pub async fn enable_quotas(&self, mountpoint: &Path) -> Result<()> {
         match self {
-            Self::Btrfs => sh("btrfs", &["quota", "enable", &mountpoint.display().to_string()]).await,
+            Self::Btrfs => {
+                sh(
+                    "btrfs",
+                    &["quota", "enable", &mountpoint.display().to_string()],
+                )
+                .await
+            }
             Self::Zfs => Ok(()),
             Self::Xfs => {
                 let opts = cmd_stdout(
                     "findmnt",
-                    &["-n", "-o", "OPTIONS", "--target", &mountpoint.display().to_string()],
+                    &[
+                        "-n",
+                        "-o",
+                        "OPTIONS",
+                        "--target",
+                        &mountpoint.display().to_string(),
+                    ],
                 )
                 .unwrap_or_default();
                 if !opts.contains("prjquota") {
@@ -159,21 +192,28 @@ impl FsOps {
     pub async fn set_quota(&self, path: &Path, quota_human: &str) -> Result<()> {
         let bytes = human_to_bytes(quota_human)?;
         match self {
-            Self::Btrfs => sh(
-                "btrfs",
-                &[
-                    "qgroup",
-                    "limit",
-                    &bytes.to_string(),
-                    &path.display().to_string(),
-                ],
-            )
-            .await,
+            Self::Btrfs => {
+                sh(
+                    "btrfs",
+                    &[
+                        "qgroup",
+                        "limit",
+                        &bytes.to_string(),
+                        &path.display().to_string(),
+                    ],
+                )
+                .await
+            }
             Self::Xfs => {
                 let inode = inode_of(path)?;
                 sh(
                     "xfs_quota",
-                    &["-x", "-c", &format!("project -s {} {}", inode, path.display()), "/"],
+                    &[
+                        "-x",
+                        "-c",
+                        &format!("project -s {} {}", inode, path.display()),
+                        "/",
+                    ],
                 )
                 .await?;
                 sh(
@@ -199,7 +239,10 @@ impl FsOps {
             Self::Btrfs => btrfs_qgroup(path),
             Self::Xfs => {
                 let inode = inode_of(path).ok()?;
-                cmd_stdout("xfs_quota", &["-x", "-c", &format!("project -p {}", inode), "/"])
+                cmd_stdout(
+                    "xfs_quota",
+                    &["-x", "-c", &format!("project -p {}", inode), "/"],
+                )
             }
             Self::Zfs => {
                 let dataset = path_to_dataset(path).ok()?;
@@ -210,7 +253,10 @@ impl FsOps {
 }
 
 fn btrfs_qgroup(path: &Path) -> Option<String> {
-    cmd_stdout("btrfs", &["qgroup", "show", "-f", &path.display().to_string()])
+    cmd_stdout(
+        "btrfs",
+        &["qgroup", "show", "-f", &path.display().to_string()],
+    )
 }
 
 fn inode_of(path: &Path) -> Result<u64> {
@@ -245,8 +291,12 @@ pub fn require_supported(mountpoint: &Path) -> Result<FsType> {
 }
 
 pub fn human_to_bytes(human: &str) -> Result<u64> {
-    let s = cmd_stdout("numfmt", &["--from=iec", human])
-        .ok_or_else(|| GarError::User(format!("quantia invalida: {} (use IEC: 20G, 1T, 500M)", human)))?;
+    let s = cmd_stdout("numfmt", &["--from=iec", human]).ok_or_else(|| {
+        GarError::User(format!(
+            "quantia invalida: {} (use IEC: 20G, 1T, 500M)",
+            human
+        ))
+    })?;
     s.trim()
         .parse()
         .map_err(|e| GarError::User(format!("falha ao parsear bytes: {}", e)))
@@ -264,7 +314,10 @@ async fn sh(prog: &str, args: &[&str]) -> Result<()> {
 
 fn cmd_stdout(prog: &str, args: &[&str]) -> Option<String> {
     let output = std::process::Command::new(prog).args(args).output().ok()?;
-    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[cfg(test)]
@@ -283,18 +336,29 @@ mod tests {
 
     #[test]
     fn test_fs_type_capabilities() {
-        assert!(FsType::Btrfs.supports_quota() && FsType::Btrfs.supports_snapshot() && FsType::Btrfs.supports_subvolume());
+        assert!(
+            FsType::Btrfs.supports_quota()
+                && FsType::Btrfs.supports_snapshot()
+                && FsType::Btrfs.supports_subvolume()
+        );
         assert!(FsType::Xfs.supports_quota());
         assert!(!FsType::Xfs.supports_snapshot());
         assert!(!FsType::Xfs.supports_subvolume());
-        assert!(FsType::Zfs.supports_quota() && FsType::Zfs.supports_snapshot() && FsType::Zfs.supports_subvolume());
+        assert!(
+            FsType::Zfs.supports_quota()
+                && FsType::Zfs.supports_snapshot()
+                && FsType::Zfs.supports_subvolume()
+        );
         assert!(!FsType::Ext4.supports_quota());
     }
 
     #[test]
     fn test_fs_type_serialize() {
         assert_eq!(serde_json::to_string(&FsType::Btrfs).unwrap(), "\"btrfs\"");
-        assert_eq!(serde_json::from_str::<FsType>("\"xfs\"").unwrap(), FsType::Xfs);
+        assert_eq!(
+            serde_json::from_str::<FsType>("\"xfs\"").unwrap(),
+            FsType::Xfs
+        );
     }
 
     #[test]

@@ -54,9 +54,19 @@ pub async fn run() -> Result<()> {
     let staged = read_pointer(&cfg.images_root, "staged");
 
     let channels = vec![
-        ("generic", "current-generic", "previous-generic", "staged-generic"),
+        (
+            "generic",
+            "current-generic",
+            "previous-generic",
+            "staged-generic",
+        ),
         ("lab", "current-lab", "previous-lab", "staged-lab"),
-        ("rescue", "current-rescue", "previous-rescue", "staged-rescue"),
+        (
+            "rescue",
+            "current-rescue",
+            "previous-rescue",
+            "staged-rescue",
+        ),
     ]
     .into_iter()
     .map(|(ch, cur, prev, stg)| ChannelPointer {
@@ -101,9 +111,18 @@ pub async fn run() -> Result<()> {
         println!("  Timestamp    : {}", cur.timestamp);
         println!("  System path  : {}", cur.system_path);
         println!();
-        println!("  Kernel URL   : http://{}:{}/netboot/current/bzImage", cfg.server_ip, cfg.http_port);
-        println!("  Initrd URL   : http://{}:{}/netboot/current/initrd", cfg.server_ip, cfg.http_port);
-        println!("  iPXE URL     : http://{}:{}/boot.ipxe", cfg.server_ip, cfg.http_port);
+        println!(
+            "  Kernel URL   : http://{}:{}/netboot/current/bzImage",
+            cfg.server_ip, cfg.http_port
+        );
+        println!(
+            "  Initrd URL   : http://{}:{}/netboot/current/initrd",
+            cfg.server_ip, cfg.http_port
+        );
+        println!(
+            "  iPXE URL     : http://{}:{}/boot.ipxe",
+            cfg.server_ip, cfg.http_port
+        );
     } else {
         output::warn("Nenhuma versão ativa. Execute: gar image build");
     }
@@ -192,7 +211,8 @@ mod tests {
 
     #[test]
     fn test_read_pointer_no_symlink() {
-        let tmp = std::env::temp_dir().join(format!("gar-status-{}-{}", "test", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("gar-status-{}-{}", "test", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         // No symlink exists
         assert!(read_pointer(&tmp, "current").is_none());

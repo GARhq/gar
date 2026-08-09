@@ -36,7 +36,11 @@ pub fn clean_fallback(cfg: &Config) -> Result<()> {
 
     // List generations
     let output = Command::new("nix-env")
-        .args(["--list-generations", "--profile", "/nix/var/nix/profiles/system"])
+        .args([
+            "--list-generations",
+            "--profile",
+            "/nix/var/nix/profiles/system",
+        ])
         .output()?;
     if !output.status.success() {
         return Err(crate::error::GarError::config(format!(
@@ -68,7 +72,10 @@ pub fn clean_fallback(cfg: &Config) -> Result<()> {
         .ok()
         .and_then(|o| {
             if o.status.success() {
-                String::from_utf8_lossy(&o.stdout).trim().parse::<i64>().ok()
+                String::from_utf8_lossy(&o.stdout)
+                    .trim()
+                    .parse::<i64>()
+                    .ok()
             } else {
                 None
             }
@@ -102,7 +109,11 @@ pub fn clean_fallback(cfg: &Config) -> Result<()> {
     if !deletable.is_empty() {
         let gen_refs: Vec<String> = deletable.iter().map(|g| g.to_string()).collect();
         let _ = Command::new("nix-env")
-            .args(["--profile", "/nix/var/nix/profiles/system", "--delete-generations"])
+            .args([
+                "--profile",
+                "/nix/var/nix/profiles/system",
+                "--delete-generations",
+            ])
             .args(&gen_refs)
             .status()?;
     }

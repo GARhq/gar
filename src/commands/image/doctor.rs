@@ -52,10 +52,19 @@ pub async fn run() -> Result<()> {
         &cfg.tftp_root.join("EFI/BOOT/BOOTX64.EFI"),
         "BOOTX64.EFI",
     ));
-    checks.push(check_symlink(&cfg.http_root.join("netboot"), "netboot link"));
+    checks.push(check_symlink(
+        &cfg.http_root.join("netboot"),
+        "netboot link",
+    ));
     checks.push(check_file(&cfg.http_root.join("boot.ipxe"), "boot.ipxe"));
-    checks.push(check_file(&cfg.http_root.join("current.ipxe"), "current.ipxe"));
-    checks.push(check_file(&cfg.http_root.join("rescue.ipxe"), "rescue.ipxe"));
+    checks.push(check_file(
+        &cfg.http_root.join("current.ipxe"),
+        "current.ipxe",
+    ));
+    checks.push(check_file(
+        &cfg.http_root.join("rescue.ipxe"),
+        "rescue.ipxe",
+    ));
 
     // Image pointers
     for ptr in &["current", "previous", "rescue", "staged"] {
@@ -115,10 +124,7 @@ pub async fn run() -> Result<()> {
         if fail == 0 {
             output::ok(format!("GAR server healthy ({} OK)", ok));
         } else {
-            output::err(format!(
-                "GAR server has issues ({} FAIL, {} OK)",
-                fail, ok
-            ));
+            output::err(format!("GAR server has issues ({} FAIL, {} OK)", fail, ok));
             println!();
             println!("Dicas:");
             println!("  - Verifique serviços: systemctl status dnsmasq nginx nfs-server");
@@ -204,7 +210,16 @@ fn check_symlink(path: &Path, label: &str) -> Check {
 
 fn check_http(url: &str, label: &str) -> Check {
     let output = std::process::Command::new("curl")
-        .args(["-sS", "--max-time", "2", "-o", "/dev/null", "-w", "%{http_code}", url])
+        .args([
+            "-sS",
+            "--max-time",
+            "2",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            url,
+        ])
         .output();
     match output {
         Ok(o) if o.status.success() => {
@@ -246,7 +261,11 @@ fn check_active_manifest_count(images_root: &Path) -> Check {
                     manifest
                         .as_ref()
                         .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
-                        .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(|s| s == "active"))
+                        .and_then(|v| {
+                            v.get("status")
+                                .and_then(|s| s.as_str())
+                                .map(|s| s == "active")
+                        })
                         .unwrap_or(false)
                 })
                 .count()
@@ -291,7 +310,8 @@ mod tests {
 
     #[test]
     fn test_check_dir_missing() {
-        let tmp = std::env::temp_dir().join(format!("gar-doctor-missing-{}.nope", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("gar-doctor-missing-{}.nope", std::process::id()));
         let c = check_dir(&tmp, "test");
         assert_eq!(c.status, "FAIL");
     }

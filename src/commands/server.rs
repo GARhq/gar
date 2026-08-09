@@ -228,11 +228,22 @@ pub async fn cmd_status() -> Result<()> {
         println!("flake_path: {}", report.flake_path);
         println!("target_host: {}", report.target_host);
         println!("runtime_root: {}", report.runtime_root);
-        println!("directory_exists: {}", if report.directory_exists { "sim" } else { "nao" });
+        println!(
+            "directory_exists: {}",
+            if report.directory_exists {
+                "sim"
+            } else {
+                "nao"
+            }
+        );
         println!("current_generation: {}", report.current_generation);
         println!(
             "nixos_rebuild_available: {}",
-            if report.nixos_rebuild_available { "sim" } else { "nao" }
+            if report.nixos_rebuild_available {
+                "sim"
+            } else {
+                "nao"
+            }
         );
     }
 

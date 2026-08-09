@@ -15,14 +15,16 @@ pub async fn run_success(program: &str, args: &[&str]) -> Result<String> {
         .args(args)
         .output()
         .await
-        .map_err(|e| {
-            GarError::CommandNotFound(format!("{}: {}", program, e))
-        })?;
+        .map_err(|e| GarError::CommandNotFound(format!("{}: {}", program, e)))?;
 
     if !output.status.success() {
         return Err(GarError::CommandFailed {
             program: program.into(),
-            args: args.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(" "),
+            args: args
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
             code: output.status.code().unwrap_or(-1),
             stderr: String::from_utf8_lossy(&output.stderr).into(),
         });
@@ -32,11 +34,7 @@ pub async fn run_success(program: &str, args: &[&str]) -> Result<String> {
 }
 
 /// Run a command in a specific working directory.
-pub async fn run_success_in_dir(
-    dir: &Path,
-    program: &str,
-    args: &[&str],
-) -> Result<String> {
+pub async fn run_success_in_dir(dir: &Path, program: &str, args: &[&str]) -> Result<String> {
     let output = Command::new(program)
         .args(args)
         .current_dir(dir)
@@ -47,7 +45,11 @@ pub async fn run_success_in_dir(
     if !output.status.success() {
         return Err(GarError::CommandFailed {
             program: program.into(),
-            args: args.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(" "),
+            args: args
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
             code: output.status.code().unwrap_or(-1),
             stderr: String::from_utf8_lossy(&output.stderr).into(),
         });

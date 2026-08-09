@@ -8,7 +8,13 @@ use crate::error::Result;
 pub async fn sync_full(repo: &Path) -> Result<()> {
     let _ = crate::services::shell::run_success(
         "git",
-        &["-C", &repo.display().to_string(), "fetch", "--all", "--prune"],
+        &[
+            "-C",
+            &repo.display().to_string(),
+            "fetch",
+            "--all",
+            "--prune",
+        ],
     )
     .await?;
     let _ = crate::services::shell::run_success(

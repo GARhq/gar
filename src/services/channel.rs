@@ -57,7 +57,10 @@ mod tests {
 
     #[test]
     fn test_target_channel_mapping() {
-        assert_eq!(target_channel(ImageTarget::DesktopGeneric), Channel::Generic);
+        assert_eq!(
+            target_channel(ImageTarget::DesktopGeneric),
+            Channel::Generic
+        );
         assert_eq!(target_channel(ImageTarget::DesktopLab), Channel::Lab);
         assert_eq!(target_channel(ImageTarget::HypervDebug), Channel::Lab);
         assert_eq!(target_channel(ImageTarget::RescueMinimal), Channel::Rescue);
@@ -65,7 +68,10 @@ mod tests {
 
     #[test]
     fn test_hardware_class_mapping() {
-        assert_eq!(target_hardware_class(ImageTarget::DesktopGeneric), "physical-generic");
+        assert_eq!(
+            target_hardware_class(ImageTarget::DesktopGeneric),
+            "physical-generic"
+        );
         assert_eq!(target_hardware_class(ImageTarget::RescueMinimal), "rescue");
     }
 

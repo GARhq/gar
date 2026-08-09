@@ -55,8 +55,14 @@ pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Resul
         target: target.as_str().into(),
         channel: channel.as_str().into(),
         image_path: image_path.display().to_string(),
-        kernel_url: format!("http://{}:{}/netboot/current/bzImage", cfg.server_ip, cfg.http_port),
-        initrd_url: format!("http://{}:{}/netboot/current/initrd", cfg.server_ip, cfg.http_port),
+        kernel_url: format!(
+            "http://{}:{}/netboot/current/bzImage",
+            cfg.server_ip, cfg.http_port
+        ),
+        initrd_url: format!(
+            "http://{}:{}/netboot/current/initrd",
+            cfg.server_ip, cfg.http_port
+        ),
         ipxe_url: format!("http://{}:{}/boot.ipxe", cfg.server_ip, cfg.http_port),
     };
 
@@ -74,13 +80,9 @@ pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Resul
     }
 
     // Reconcile statuses across all generations
-    if let Err(e) = crate::services::manifest::reconcile(
-        &cfg.images_root,
-        Some(&build_id),
-        None,
-        None,
-        None,
-    ) {
+    if let Err(e) =
+        crate::services::manifest::reconcile(&cfg.images_root, Some(&build_id), None, None, None)
+    {
         output::warn(format!("reconcile failed: {}", e));
     }
 

@@ -7,9 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GarError, Result};
-pub use crate::services::filesystem::{
-    bytes_to_human, detect as detect_fs, human_to_bytes, FsOps, FsType,
-};
+pub use crate::services::filesystem::{bytes_to_human, detect, human_to_bytes, FsOps, FsType};
 
 /// Harness-socket path used by NixOS for interactive shells.
 const NIX_INTERACTIVE_SHELL: &str = "/run/current-system/sw/bin/bash";
@@ -17,7 +15,15 @@ const NIX_INTERACTIVE_SHELL: &str = "/run/current-system/sw/bin/bash";
 pub async fn useradd_system(username: &str, home: &str) -> Result<()> {
     crate::services::shell::run_success(
         "useradd",
-        &["-M", "-d", home, "-s", NIX_INTERACTIVE_SHELL, "-U", username],
+        &[
+            "-M",
+            "-d",
+            home,
+            "-s",
+            NIX_INTERACTIVE_SHELL,
+            "-U",
+            username,
+        ],
     )
     .await?;
     Ok(())
@@ -70,12 +76,15 @@ pub fn user_groups(username: &str) -> HashSet<String> {
 
 pub fn user_shadow_hash(username: &str) -> Option<String> {
     cmd_stdout("getent", &["shadow", username]).and_then(|s| {
-        s.split(':').nth(1).filter(|v| !v.is_empty()).map(str::to_string)
+        s.split(':')
+            .nth(1)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
     })
 }
 
 pub fn fs_type(path: &Path) -> Option<String> {
-    let fs = detect_fs(path);
+    let fs = detect(path);
     (fs != FsType::Unknown).then(|| fs.as_str().to_string())
 }
 
@@ -84,11 +93,11 @@ pub fn is_mountpoint(path: &Path) -> bool {
 }
 
 pub fn is_btrfs(path: &Path) -> bool {
-    detect_fs(path) == FsType::Btrfs
+    detect(path) == FsType::Btrfs
 }
 
 pub fn supports_quota(path: &Path) -> bool {
-    detect_fs(path).supports_quota()
+    detect(path).supports_quota()
 }
 
 pub fn dir_size_bytes(path: &Path) -> u64 {
@@ -116,7 +125,10 @@ fn cmd_ok(prog: &str, args: &[&str]) -> bool {
 
 fn cmd_stdout(prog: &str, args: &[&str]) -> Option<String> {
     let output = std::process::Command::new(prog).args(args).output().ok()?;
-    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,9 +233,11 @@ impl HomeMeta {
 
 pub fn read_meta_value(home: &Path, key: &str) -> Option<String> {
     let content = std::fs::read_to_string(HomeMeta::path_for(home)).ok()?;
-    content
-        .lines()
-        .find_map(|l| l.split_once('=').filter(|(k, _)| *k == key).map(|(_, v)| v.into()))
+    content.lines().find_map(|l| {
+        l.split_once('=')
+            .filter(|(k, _)| *k == key)
+            .map(|(_, v)| v.into())
+    })
 }
 
 fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {

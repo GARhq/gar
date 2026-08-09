@@ -18,8 +18,8 @@ pub async fn dispatch(cmd: ImageCmd) -> Result<()> {
 }
 
 pub mod build;
-pub mod rollback;
-pub mod list;
-pub mod status;
-pub mod gc;
 pub mod doctor;
+pub mod gc;
+pub mod list;
+pub mod rollback;
+pub mod status;

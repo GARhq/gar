@@ -104,9 +104,7 @@ pub fn reexec_as_root_if_needed(action: &str) -> Result<bool> {
     }
 
     // Sudo available?
-    let sudo_check = std::process::Command::new("sudo")
-        .arg("--version")
-        .output();
+    let sudo_check = std::process::Command::new("sudo").arg("--version").output();
     if sudo_check.is_err() {
         return Err(crate::error::GarError::runtime_guard(format!(
             "requer root ou sudo para executar: {}",

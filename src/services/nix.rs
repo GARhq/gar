@@ -6,13 +6,15 @@ use crate::error::Result;
 
 /// Run `nix flake update` in the given directory.
 pub async fn flake_update(flake_dir: &Path) -> Result<()> {
-    let _ = crate::services::shell::run_success_in_dir(flake_dir, "nix", &["flake", "update"]).await?;
+    let _ =
+        crate::services::shell::run_success_in_dir(flake_dir, "nix", &["flake", "update"]).await?;
     Ok(())
 }
 
 /// Run `nix flake check` in the given directory.
 pub async fn flake_check(flake_dir: &Path) -> Result<()> {
-    let _ = crate::services::shell::run_success_in_dir(flake_dir, "nix", &["flake", "check"]).await?;
+    let _ =
+        crate::services::shell::run_success_in_dir(flake_dir, "nix", &["flake", "check"]).await?;
     Ok(())
 }
 
