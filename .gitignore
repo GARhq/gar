@@ -1,0 +1,26 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config
+.env
+.env.local
+
+# Lock files (keep Cargo.lock for binary, gitignore for libs)
+# Cargo.lock
+
+# Nix
+result
+result-*
+
+# Editor swap files
+*.swp
+*.swo

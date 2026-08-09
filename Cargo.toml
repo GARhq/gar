@@ -1,0 +1,55 @@
+[package]
+name = "gar"
+version = "0.1.0"
+edition = "2021"
+authors = ["Gabriel Aguiar Rocha <gabriel@garhq.dev>"]
+description = "GAR CLI - Unified manager for GAROS diskless clients and NixOS server"
+license = "MIT"
+repository = "https://github.com/GARhq/gar"
+readme = "README.md"
+
+[[bin]]
+name = "gar"
+path = "src/main.rs"
+
+[dependencies]
+# CLI parsing
+clap = { version = "4.5", features = ["derive", "cargo", "env"] }
+
+# Async runtime
+tokio = { version = "1.43", features = ["macros", "rt-multi-thread", "process", "fs", "io-util", "sync"] }
+
+# Errors
+thiserror = "2.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Tabular output
+tabled = "0.14"
+
+# Colors
+owo-colors = "4.2"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID for build IDs (later)
+uuid = { version = "1.11", features = ["v4"], optional = true }
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.13"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
