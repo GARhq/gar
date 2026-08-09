@@ -1,26 +1,28 @@
-# Rust
-/target/
-**/*.rs.bk
+# Nix
+result
+result-*
+*.gcda
+*.gcno
 
-# IDE
+# Cargo / Rust
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Editor
 .vscode/
 .idea/
+*.swp
+*~
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Local config
-.env
-.env.local
+# Logs
+*.log
 
-# Lock files (keep Cargo.lock for binary, gitignore for libs)
-# Cargo.lock
-
-# Nix
-result
-result-*
-
-# Editor swap files
-*.swp
-*.swo
+# Build artifacts
+*.tar.gz
+*.tar.bz2
+*.zip
