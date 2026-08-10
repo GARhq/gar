@@ -62,7 +62,11 @@ pub enum Coherence {
     /// A specific file or value is missing.
     Missing(String),
     /// A specific file or value diverges from expected.
-    Diverged { file: String, expected: String, actual: String },
+    Diverged {
+        file: String,
+        expected: String,
+        actual: String,
+    },
 }
 
 impl Coherence {
@@ -74,7 +78,11 @@ impl Coherence {
                 "Bundle de boot invalido: {} ausente",
                 what
             ))),
-            Self::Diverged { file, expected, actual } => Err(GarError::Publish(format!(
+            Self::Diverged {
+                file,
+                expected,
+                actual,
+            } => Err(GarError::Publish(format!(
                 "Bundle de boot invalido: {} anuncia {}, esperado {}",
                 file, actual, expected
             ))),
@@ -144,10 +152,10 @@ pub fn channel_boot_state(images_root: &Path, channel: Channel) -> Result<BootSt
         .to_string();
 
     let gen_dir = images_root.join(&version);
-    let init_path = crate::services::generation::read_generation_init_path(&gen_dir)
-        .unwrap_or_default();
-    let kernel_params = crate::services::generation::read_generation_kernel_params(&gen_dir)
-        .unwrap_or_default();
+    let init_path =
+        crate::services::generation::read_generation_init_path(&gen_dir).unwrap_or_default();
+    let kernel_params =
+        crate::services::generation::read_generation_kernel_params(&gen_dir).unwrap_or_default();
 
     Ok(BootState {
         version,
@@ -264,8 +272,8 @@ pub fn prepare_boot_bundle(
 
     if !current_ver.is_empty() {
         let gen_dir = cfg.images_root.join(current_ver);
-        current_params =
-            crate::services::generation::read_generation_kernel_params(&gen_dir).unwrap_or_default();
+        current_params = crate::services::generation::read_generation_kernel_params(&gen_dir)
+            .unwrap_or_default();
         let manifest_path = gen_dir.join("manifest.json");
         if manifest_path.is_file() {
             current_channel = manifest_channel_field(&manifest_path).unwrap_or_default();
@@ -274,8 +282,8 @@ pub fn prepare_boot_bundle(
 
     if !rescue_ver.is_empty() {
         let gen_dir = cfg.images_root.join(rescue_ver);
-        rescue_params =
-            crate::services::generation::read_generation_kernel_params(&gen_dir).unwrap_or_default();
+        rescue_params = crate::services::generation::read_generation_kernel_params(&gen_dir)
+            .unwrap_or_default();
     }
 
     let mut generic_state = channel_boot_state(&cfg.images_root, Channel::Generic)?;
@@ -421,11 +429,7 @@ shell
 /// "diverged value" if they care.
 #[must_use = "validate_boot_bundle returns Coherence; ignoring it may promote a divergent bundle"]
 #[tracing::instrument(skip_all, fields(bundle_dir = %bundle_dir.display()))]
-pub fn validate_boot_bundle(
-    bundle_dir: &Path,
-    current_ver: &str,
-    rescue_ver: &str,
-) -> Coherence {
+pub fn validate_boot_bundle(bundle_dir: &Path, current_ver: &str, rescue_ver: &str) -> Coherence {
     for file in &BUNDLE_FILES {
         if !bundle_dir.join(file).is_file() {
             return Coherence::Missing((*file).to_string());
@@ -628,21 +632,13 @@ pub fn validate_boot_coherence(
 /// hot path of boot validation.
 fn extract_first_json_string(body: &str, key: &str) -> Option<String> {
     let needle = format!("\"{}\"", key);
-    let mut idx = 0usize;
-    loop {
-        let pos = match body[idx..].find(&needle) {
-            Some(p) => p,
-            None => return None,
-        };
-        let after = idx + pos + needle.len();
-                // Skip whitespace.
-                let rest = body[after..].trim_start();
-                // Expect ':' then optional whitespace then '"'.
-                let rest = rest.strip_prefix(':')?.trim_start();
-                let rest = rest.strip_prefix('"')?;
-                let end = rest.find('"')?;
-                return Some(rest[..end].to_string());
-            }
+    let pos = body.find(&needle)?;
+    let after = pos + needle.len();
+    let rest = body[after..].trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
 }
 
 /// Validate the rescue coherence: when `rescue_ver` is non-empty,
@@ -670,7 +666,11 @@ pub fn validate_rescue_coherence(http_root: &Path, rescue_ver: &str) -> Coherenc
 
 /// Helper: substitute empty strings with `none` for iPXE variable defaults.
 fn empty_to_none(s: &str) -> &str {
-    if s.is_empty() { "none" } else { s }
+    if s.is_empty() {
+        "none"
+    } else {
+        s
+    }
 }
 
 /// Helper: read the `channel` field from a manifest.json file. Used by
@@ -680,6 +680,16 @@ fn empty_to_none(s: &str) -> &str {
 fn manifest_channel_field(manifest_path: &Path) -> Option<String> {
     let content = fs::read_to_string(manifest_path).ok()?;
     extract_first_json_string(&content, "channel")
+}
+
+/// Public helper: read the `system_path` field from a manifest.json.
+/// Used by `services::build::ensure_gc_root_for_generation` to recover
+/// the nix store path for a published generation. Public so other
+/// services (e.g. GC) can reuse it.
+#[must_use = "read_manifest_system_path returns Option; ignoring it loses the lookup"]
+pub fn read_manifest_system_path(manifest_path: &Path) -> Option<String> {
+    let content = fs::read_to_string(manifest_path).ok()?;
+    extract_first_json_string(&content, "system_path")
 }
 
 #[cfg(test)]

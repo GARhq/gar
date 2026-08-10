@@ -144,7 +144,6 @@ fn read_pointer(images_root: &Path, name: &str) -> Option<String> {
 /// Migrated to `services::atomic_path::atomic_symlink` (Phase 5.6). The
 /// inline copy here was removed; callers now go through the service
 /// module so the same semantics are shared with boot/storage code.
-
 #[cfg(test)]
 mod tests {
     use super::*;
