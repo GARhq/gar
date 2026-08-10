@@ -19,6 +19,7 @@ pub mod lock;
 pub mod manifest;
 pub mod nix;
 pub mod nixos_rebuild;
+pub mod rollback;
 pub mod runtime_guard;
 pub mod shell;
 pub mod user_system;

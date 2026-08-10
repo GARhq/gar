@@ -161,9 +161,32 @@ fn manifest_path(generation_dir: &Path) -> PathBuf {
 /// Also returns the path of the `flake.nix` file (not just the dir) so
 /// callers can stat it. `flake.nix` must be a regular file (not a
 /// directory named `flake.nix`).
+///
+/// `hint` (optional): caller-provided repo root. If it points to a
+/// directory containing a `flake.nix` or `flake/branding-assets.nix`
+/// (the GAROS marker), it wins and short-circuits the walk. Use this
+/// when the binary is built from one repo but runs against a sibling
+/// repo (e.g. `gar/` is built and shipped, but `garos/` is the runtime
+/// flake being audited). Without an explicit hint, walk-up picks the
+/// first `flake.nix` found — which in a sibling-repo setup resolves to
+/// the wrong tree and reports phantom drift.
 #[must_use = "find_flake_root returns the resolved path or None"]
-#[tracing::instrument(skip_all, fields(start = %start.display()))]
-pub fn find_flake_root(start: &Path) -> Option<PathBuf> {
+#[tracing::instrument(skip_all, fields(start = %start.display(), hint = ?hint.map(|p| p.display().to_string())))]
+pub fn find_flake_root(start: &Path, hint: Option<&Path>) -> Option<PathBuf> {
+    if let Some(h) = hint {
+        let h = h.canonicalize().unwrap_or_else(|_| h.to_path_buf());
+        // GAROS marker: flake/branding-assets.nix is unique to the GAROS monorepo
+        // and lets us disambiguate from a sibling `gar/` flake.nix.
+        if h.join("flake.nix").is_file() || h.join("flake/branding-assets.nix").is_file() {
+            return Some(h);
+        }
+        // Hint was provided but doesn't look like a valid repo root — fall
+        // through to walk-up rather than silently returning None.
+        tracing::debug!(
+            hint = %h.display(),
+            "hint provided but no flake.nix or flake/branding-assets.nix; falling back to walk-up"
+        );
+    }
     let mut current = start
         .canonicalize()
         .unwrap_or_else(|_| start.to_path_buf());
@@ -282,7 +305,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join("flake.nix"), "{}").unwrap();
 
-        let root = find_flake_root(&tmp).unwrap();
+        let root = find_flake_root(&tmp, None).unwrap();
         assert_eq!(
             std::fs::canonicalize(&root).unwrap(),
             std::fs::canonicalize(&tmp).unwrap()
@@ -301,7 +324,7 @@ mod tests {
         std::fs::write(tmp.join("flake.nix"), "{}").unwrap();
 
         let deep = tmp.join("deep/nested/dir");
-        let root = find_flake_root(&deep).unwrap();
+        let root = find_flake_root(&deep, None).unwrap();
         assert_eq!(
             std::fs::canonicalize(&root).unwrap(),
             std::fs::canonicalize(&tmp).unwrap()
@@ -315,7 +338,61 @@ mod tests {
         // /tmp on a fresh machine may or may not contain flake.nix somewhere up.
         // Use a deeply synthetic path under /dev/null-style root to avoid collisions.
         let bogus = std::path::PathBuf::from("/this/path/definitely/does/not/exist");
-        let result = find_flake_root(&bogus);
+        let result = find_flake_root(&bogus, None);
         assert!(result.is_none(), "expected None, got {:?}", result);
+    }
+
+    #[test]
+    fn test_find_flake_root_hint_short_circuits_to_hint_dir() {
+        // Caller provides a hint pointing at a real repo root; the
+        // walk-up is bypassed and the hint wins.
+        let tmp = std::env::temp_dir().join(format!(
+            "gar-find-hint-{}-a",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(tmp.join("flake")).unwrap();
+        std::fs::write(tmp.join("flake/branding-assets.nix"), "{ logoTerminal = null; }").unwrap();
+
+        // Start from an unrelated path with no flake.nix anywhere up.
+        let bogus = std::path::PathBuf::from("/this/path/definitely/does/not/exist");
+        let root = find_flake_root(&bogus, Some(&tmp)).unwrap();
+        assert_eq!(
+            std::fs::canonicalize(&root).unwrap(),
+            std::fs::canonicalize(&tmp).unwrap(),
+            "hint must short-circuit walk-up"
+        );
+
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_find_flake_root_hint_invalid_falls_back_to_walk_up() {
+        // Hint is provided but doesn't look like a valid repo root
+        // (no flake.nix, no flake/branding-assets.nix). Must NOT return
+        // None silently — fall back to walk-up.
+        let real_root = std::env::temp_dir().join(format!(
+            "gar-find-hint-fallback-{}-root",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&real_root).unwrap();
+        std::fs::write(real_root.join("flake.nix"), "{}").unwrap();
+        let deep = real_root.join("deep/nested");
+        std::fs::create_dir_all(&deep).unwrap();
+
+        let bogus_hint = std::env::temp_dir().join(format!(
+            "gar-find-hint-fallback-{}-bogus",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&bogus_hint).unwrap();
+
+        let root = find_flake_root(&deep, Some(&bogus_hint)).unwrap();
+        assert_eq!(
+            std::fs::canonicalize(&root).unwrap(),
+            std::fs::canonicalize(&real_root).unwrap(),
+            "invalid hint must fall back to walk-up, not return None"
+        );
+
+        std::fs::remove_dir_all(&real_root).unwrap();
+        std::fs::remove_dir_all(&bogus_hint).unwrap();
     }
 }

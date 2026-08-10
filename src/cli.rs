@@ -206,7 +206,7 @@ pub enum ClientCmd {
 #[derive(Debug, Subcommand)]
 pub enum BrandingCmd {
     /// Diagnose Plymouth/SDDM/Plasma branding
-    Doctor,
+    Doctor(crate::commands::branding::DoctorFlags),
 }
 
 /// Client target types (from ragc).

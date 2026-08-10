@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use crate::error::{GarError, Result};
 
 /// GAR-wide configuration. Cheap to clone (all fields are PathBuf/String).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     // Flake / repo
     pub flake_path: PathBuf,

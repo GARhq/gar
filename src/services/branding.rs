@@ -496,7 +496,7 @@ pub fn plasma_wallpapers() -> BrandingCheck {
 }
 
 /// Run all branding checks and assemble a report.
-pub fn collect_report() -> BrandingReport {
+pub fn collect_report(cfg: &crate::config::Config) -> BrandingReport {
     let sddm_current = sddm_current();
     let sddm_theme_dirs = sddm_theme_dirs();
     let plymouth_theme = plymouth_theme();
@@ -525,7 +525,7 @@ pub fn collect_report() -> BrandingReport {
     }
 
     // Baseline manifest — degrades silently when no manifest is found.
-    let baseline = collect_baseline();
+    let baseline = collect_baseline(cfg);
 
     BrandingReport {
         sddm_current,
@@ -547,7 +547,7 @@ pub fn collect_report() -> BrandingReport {
 /// — `gar branding doctor` reports the live runtime checks regardless of
 /// baseline availability.
 #[tracing::instrument(skip_all)]
-fn collect_baseline() -> Option<BaselineReport> {
+fn collect_baseline(cfg: &crate::config::Config) -> Option<BaselineReport> {
     let path = match resolve_baseline_path() {
         Ok(Some(p)) => p,
         Ok(None) => {
@@ -569,8 +569,14 @@ fn collect_baseline() -> Option<BaselineReport> {
     // Repo root = parent of the baseline manifest, walked up to find flake.nix.
     // For runtime paths (/etc/ragos/branding/...) the parent dir may not be
     // the repo root — fall back to manifest dir if flake.nix isn't found.
-    let repo_root = crate::services::manifest::find_flake_root(path.parent().unwrap_or(&path))
-        .unwrap_or_else(|| path.parent().unwrap_or(&path).to_path_buf());
+    // Pass cfg.flake_path as a hint to disambiguate when `gar` is built
+    // from a sibling repo (e.g. `gar/`) but auditing a different repo
+    // (e.g. `garos/`) — walk-up alone would resolve to the wrong flake.nix.
+    let repo_root = crate::services::manifest::find_flake_root(
+        path.parent().unwrap_or(&path),
+        Some(cfg.flake_path.as_path()),
+    )
+    .unwrap_or_else(|| path.parent().unwrap_or(&path).to_path_buf());
     let drifts = validate_against_baseline(&manifest, &repo_root);
     Some(summarize_baseline(&path, &manifest, drifts))
 }
@@ -662,7 +668,7 @@ mod tests {
         // Point NIX_SW at a tempdir via env override? We keep it read-only:
         // when /run/current-system/sw doesn't exist (CI), every check reports
         // found=false without crashing — that's the contract.
-        let r = collect_report();
+        let r = collect_report(&crate::config::Config::default());
         // On a real NixOS install some checks pass; on a CI sandbox they all fail.
         // Either way: ok + fail == total checks.
         assert_eq!(r.ok_count + r.fail_count, 7);
@@ -700,7 +706,7 @@ mod tests {
 
     #[test]
     fn test_report_ok_fail_sum() {
-        let r = collect_report();
+        let r = collect_report(&crate::config::Config::default());
         assert_eq!(r.ok_count + r.fail_count, 7);
     }
 
