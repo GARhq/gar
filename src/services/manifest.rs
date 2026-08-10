@@ -152,6 +152,33 @@ fn manifest_path(generation_dir: &Path) -> PathBuf {
     generation_dir.join("manifest.json")
 }
 
+/// Walk up from `start` looking for a directory containing `flake.nix`.
+///
+/// Equivalent to bash `find_flake_root` (ragc/lib/common.sh:18-31).
+/// Caps at filesystem root (`/`). Returns `None` if no `flake.nix`
+/// found within the walk.
+///
+/// Also returns the path of the `flake.nix` file (not just the dir) so
+/// callers can stat it. `flake.nix` must be a regular file (not a
+/// directory named `flake.nix`).
+#[must_use = "find_flake_root returns the resolved path or None"]
+#[tracing::instrument(skip_all, fields(start = %start.display()))]
+pub fn find_flake_root(start: &Path) -> Option<PathBuf> {
+    let mut current = start
+        .canonicalize()
+        .unwrap_or_else(|_| start.to_path_buf());
+    loop {
+        let candidate = current.join("flake.nix");
+        if candidate.is_file() {
+            return Some(current);
+        }
+        match current.parent() {
+            Some(parent) if parent != current => current = parent.to_path_buf(),
+            _ => return None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,5 +269,53 @@ mod tests {
         assert!(matches!(r, Err(GarError::Validation(_))));
 
         std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    // --- find_flake_root ---
+
+    #[test]
+    fn test_find_flake_root_returns_self_when_here() {
+        let tmp = std::env::temp_dir().join(format!(
+            "gar-find-here-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("flake.nix"), "{}").unwrap();
+
+        let root = find_flake_root(&tmp).unwrap();
+        assert_eq!(
+            std::fs::canonicalize(&root).unwrap(),
+            std::fs::canonicalize(&tmp).unwrap()
+        );
+
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_find_flake_root_walks_up() {
+        let tmp = std::env::temp_dir().join(format!(
+            "gar-find-up-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(tmp.join("deep/nested/dir")).unwrap();
+        std::fs::write(tmp.join("flake.nix"), "{}").unwrap();
+
+        let deep = tmp.join("deep/nested/dir");
+        let root = find_flake_root(&deep).unwrap();
+        assert_eq!(
+            std::fs::canonicalize(&root).unwrap(),
+            std::fs::canonicalize(&tmp).unwrap()
+        );
+
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_find_flake_root_returns_none_when_missing() {
+        // /tmp on a fresh machine may or may not contain flake.nix somewhere up.
+        // Use a deeply synthetic path under /dev/null-style root to avoid collisions.
+        let bogus = std::path::PathBuf::from("/this/path/definitely/does/not/exist");
+        let result = find_flake_root(&bogus);
+        assert!(result.is_none(), "expected None, got {:?}", result);
     }
 }
