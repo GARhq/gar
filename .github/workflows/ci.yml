@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: test (${{ matrix.os }} / Rust ${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        rust: [stable, beta]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        # Sem -D warnings por enquanto: 14 warnings pre-existentes em código
+        # Phase 0/5.2 (Phase 7 candidate). Adicionar -D warnings quando
+        # batch de cleanup rodar.
+        run: cargo clippy --workspace --all-targets --message-format=short
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Test (serial pra evitar flakes conhecidos)
+        # O test pollution em test_build_or_reuse_system_honors_test_env
+        # e test_ensure_tier1_ready_happy_path flake em paralelo. Workaround
+        # atual é --test-threads=1. Fix permanente é #[serial_test::serial]
+        # (Phase 7).
+        run: cargo test --workspace -- --test-threads=1
+
+      - name: Test (parallel — sanity check do flake)
+        # Roda paralelo como sanity check. Se flake, permite retry manual.
+        run: cargo test --workspace
+        continue-on-error: true
+
+  audit:
+    name: Security audit (cargo-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit
+
+      - name: Run audit
+        run: cargo audit
+
+  msrv:
+    name: MSRV check (1.75)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.75
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.75
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build MSRV
+        run: cargo build --release

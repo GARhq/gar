@@ -1,0 +1,36 @@
+version: 2
+updates:
+  # Cargo dependencies
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "rust"
+    groups:
+      cargo-minor:
+        update-types:
+          - "minor"
+          - "patch"
+      cargo-major:
+        update-types:
+          - "major"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"
+    groups:
+      actions-patch:
+        update-types:
+          - "minor"
+          - "patch"
