@@ -6,6 +6,7 @@
 
 pub mod atomic_file;
 pub mod atomic_path;
+pub mod boot;
 pub mod branding;
 pub mod btrfs;
 pub mod build;
