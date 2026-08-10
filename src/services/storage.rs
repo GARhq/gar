@@ -43,7 +43,11 @@ pub fn storage_mount_ready(data_root: &Path, images_root: &Path) -> bool {
             return true;
         }
     }
-    if let Ok(out) = Command::new("mountpoint").arg("-q").arg(images_root).output() {
+    if let Ok(out) = Command::new("mountpoint")
+        .arg("-q")
+        .arg(images_root)
+        .output()
+    {
         if out.status.success() {
             return true;
         }

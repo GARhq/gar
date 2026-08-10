@@ -187,9 +187,7 @@ pub fn find_flake_root(start: &Path, hint: Option<&Path>) -> Option<PathBuf> {
             "hint provided but no flake.nix or flake/branding-assets.nix; falling back to walk-up"
         );
     }
-    let mut current = start
-        .canonicalize()
-        .unwrap_or_else(|_| start.to_path_buf());
+    let mut current = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
     loop {
         let candidate = current.join("flake.nix");
         if candidate.is_file() {
@@ -298,10 +296,7 @@ mod tests {
 
     #[test]
     fn test_find_flake_root_returns_self_when_here() {
-        let tmp = std::env::temp_dir().join(format!(
-            "gar-find-here-{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("gar-find-here-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join("flake.nix"), "{}").unwrap();
 
@@ -316,10 +311,7 @@ mod tests {
 
     #[test]
     fn test_find_flake_root_walks_up() {
-        let tmp = std::env::temp_dir().join(format!(
-            "gar-find-up-{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("gar-find-up-{}", std::process::id()));
         std::fs::create_dir_all(tmp.join("deep/nested/dir")).unwrap();
         std::fs::write(tmp.join("flake.nix"), "{}").unwrap();
 
@@ -346,12 +338,13 @@ mod tests {
     fn test_find_flake_root_hint_short_circuits_to_hint_dir() {
         // Caller provides a hint pointing at a real repo root; the
         // walk-up is bypassed and the hint wins.
-        let tmp = std::env::temp_dir().join(format!(
-            "gar-find-hint-{}-a",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("gar-find-hint-{}-a", std::process::id()));
         std::fs::create_dir_all(tmp.join("flake")).unwrap();
-        std::fs::write(tmp.join("flake/branding-assets.nix"), "{ logoTerminal = null; }").unwrap();
+        std::fs::write(
+            tmp.join("flake/branding-assets.nix"),
+            "{ logoTerminal = null; }",
+        )
+        .unwrap();
 
         // Start from an unrelated path with no flake.nix anywhere up.
         let bogus = std::path::PathBuf::from("/this/path/definitely/does/not/exist");

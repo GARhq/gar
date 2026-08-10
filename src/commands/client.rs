@@ -31,10 +31,7 @@ pub async fn cmd_session_doctor() -> Result<()> {
     let healthy = report.fail_count == 0;
 
     if cfg.json_output {
-        output::json(&ClientSessionSummary {
-            report,
-            healthy,
-        })?;
+        output::json(&ClientSessionSummary { report, healthy })?;
     } else {
         output::section("GAR Client Session Doctor");
         println!();
@@ -117,18 +114,16 @@ mod tests {
 
     #[test]
     fn test_summary_has_healthy_field() {
-        let tmp_img = std::env::temp_dir().join(format!("gar-client-cmd-img-{}", std::process::id()));
+        let tmp_img =
+            std::env::temp_dir().join(format!("gar-client-cmd-img-{}", std::process::id()));
         std::fs::create_dir_all(&tmp_img).unwrap();
-        let tmp_inv = std::env::temp_dir().join(format!("gar-client-cmd-inv-{}", std::process::id()));
+        let tmp_inv =
+            std::env::temp_dir().join(format!("gar-client-cmd-inv-{}", std::process::id()));
         std::fs::write(&tmp_inv, "").unwrap();
 
         let r = client::collect_report(&tmp_img, &tmp_inv);
         let healthy = r.fail_count == 0;
-        let json = serde_json::to_string(&ClientSessionSummary {
-            report: r,
-            healthy,
-        })
-        .unwrap();
+        let json = serde_json::to_string(&ClientSessionSummary { report: r, healthy }).unwrap();
         assert!(json.contains("\"healthy\""));
 
         std::fs::remove_dir_all(&tmp_img).unwrap();

@@ -192,7 +192,12 @@ pub fn group_members(name: &str) -> Vec<String> {
     let s = String::from_utf8_lossy(&out.stdout);
     s.split(':')
         .nth(3)
-        .map(|m| m.split(',').filter(|x| !x.is_empty()).map(str::to_string).collect())
+        .map(|m| {
+            m.split(',')
+                .filter(|x| !x.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -235,9 +240,11 @@ pub fn write_meta(sector: &Path, meta: &GroupMeta) -> Result<()> {
 /// Read a single key from `.group-meta` (returns None if missing).
 pub fn read_meta_value(sector: &Path, key: &str) -> Option<String> {
     let content = std::fs::read_to_string(meta_path(sector)).ok()?;
-    content
-        .lines()
-        .find_map(|l| l.split_once('=').filter(|(k, _)| *k == key).map(|(_, v)| v.into()))
+    content.lines().find_map(|l| {
+        l.split_once('=')
+            .filter(|(k, _)| *k == key)
+            .map(|(_, v)| v.into())
+    })
 }
 
 /// Total bytes used by a sector (`du -sb`).
@@ -257,7 +264,11 @@ pub fn chown_sector(sector: &Path, group: &str) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(sector)?;
     let _ = std::process::Command::new("chown")
-        .args(["-R", &format!("root:{}", group), &sector.display().to_string()])
+        .args([
+            "-R",
+            &format!("root:{}", group),
+            &sector.display().to_string(),
+        ])
         .status();
     std::fs::set_permissions(sector, PermissionsExt::from_mode(0o750))?;
     Ok(())

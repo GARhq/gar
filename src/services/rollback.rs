@@ -115,12 +115,7 @@ pub fn clear_pending_rollback(path: &Path) -> Result<()> {
 /// Same format as `write_pending_rollback`.
 #[must_use = "write_last_rollback writes a state file as a side effect"]
 #[tracing::instrument(skip_all, fields(path = %path.display()))]
-pub fn write_last_rollback(
-    path: &Path,
-    from: &str,
-    to: &str,
-    channel: Option<&str>,
-) -> Result<()> {
+pub fn write_last_rollback(path: &Path, from: &str, to: &str, channel: Option<&str>) -> Result<()> {
     write_record(path, from, to, channel)
 }
 
@@ -165,9 +160,7 @@ pub fn validate_existing_current(images_root: &Path) -> Result<Option<PathBuf>> 
     let resolved = images_root.join(
         target
             .file_name()
-            .ok_or_else(|| {
-                GarError::validation("current symlink target has no filename")
-            })?,
+            .ok_or_else(|| GarError::validation("current symlink target has no filename"))?,
     );
     if !resolved.is_dir() {
         return Err(GarError::validation(format!(
@@ -192,7 +185,7 @@ pub fn validate_existing_current(images_root: &Path) -> Result<Option<PathBuf>> 
 #[tracing::instrument(skip_all, fields(images_root = %images_root.display()))]
 pub fn clear_stale_staged_pointer(images_root: &Path) -> Result<usize> {
     use crate::cli::Channel;
-use crate::services::channel::channel_staged_pointer;
+    use crate::services::channel::channel_staged_pointer;
     let mut cleared = 0;
 
     // 1. Top-level staged
@@ -277,7 +270,11 @@ fn load_record(path: &Path) -> Result<RollbackLoadOutcome> {
                 "target" => to = Some(v.trim().to_string()),
                 "channel" => {
                     let v = v.trim();
-                    channel = if v.is_empty() { None } else { Some(v.to_string()) };
+                    channel = if v.is_empty() {
+                        None
+                    } else {
+                        Some(v.to_string())
+                    };
                 }
                 _ => {} // ignore unknown keys (forward compat)
             }
@@ -557,11 +554,7 @@ mod tests {
         for name in ["staged-generic", "staged-lab", "staged-rescue"] {
             let target = dir.join(format!("v-old-{}", name));
             fs::create_dir_all(&target).unwrap();
-            std::os::unix::fs::symlink(
-                format!("v-old-{}", name),
-                dir.join(name),
-            )
-            .unwrap();
+            std::os::unix::fs::symlink(format!("v-old-{}", name), dir.join(name)).unwrap();
         }
         let cleared = clear_stale_staged_pointer(&dir).unwrap();
         assert_eq!(cleared, 3);

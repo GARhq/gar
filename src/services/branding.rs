@@ -113,9 +113,8 @@ pub struct BaselineReport {
 #[tracing::instrument(skip_all, fields(path = %path.display()))]
 pub fn parse_baseline_manifest(path: &Path) -> Result<BaselineManifest> {
     let content = std::fs::read_to_string(path)?;
-    parse_baseline_manifest_str(&content).map_err(|e| {
-        GarError::validation(format!("parse {}: {}", path.display(), e))
-    })
+    parse_baseline_manifest_str(&content)
+        .map_err(|e| GarError::validation(format!("parse {}: {}", path.display(), e)))
 }
 
 /// Parsed in-memory manifest (split into surfaces + assets for easy lookup).
@@ -144,9 +143,10 @@ pub fn parse_baseline_manifest_str(content: &str) -> std::result::Result<Baselin
 
         // Header line: brandlab_manifest_version|<n>
         if parts[0] == "brandlab_manifest_version" && parts.len() == 2 {
-            version = Some(parts[1].parse().map_err(|_| {
-                format!("line {}: invalid version '{}'", line_no + 1, parts[1])
-            })?);
+            version =
+                Some(parts[1].parse().map_err(|_| {
+                    format!("line {}: invalid version '{}'", line_no + 1, parts[1])
+                })?);
             continue;
         }
 
@@ -232,7 +232,9 @@ fn attach_sha256_to_surface(surfaces: &mut Vec<SurfaceEntry>, path: &str, hash: 
 #[tracing::instrument(skip_all)]
 pub fn resolve_baseline_path() -> Result<Option<PathBuf>> {
     let candidates: [Option<PathBuf>; 4] = [
-        std::env::var("GAR_BRANDING_BASELINE").ok().map(PathBuf::from),
+        std::env::var("GAR_BRANDING_BASELINE")
+            .ok()
+            .map(PathBuf::from),
         Some(PathBuf::from("/etc/ragos/branding/baseline-manifest.txt")),
         Some(PathBuf::from(
             "/run/current-system/sw/share/gar/branding/baseline-manifest.txt",
@@ -262,10 +264,7 @@ pub fn resolve_baseline_path() -> Result<Option<PathBuf>> {
 /// `absent` surfaces are NOT reported as drift — they're a design choice.
 #[must_use = "validate_against_baseline returns drifts or an empty Vec"]
 #[tracing::instrument(skip_all, fields(repo_root = %repo_root.display()))]
-pub fn validate_against_baseline(
-    manifest: &BaselineManifest,
-    repo_root: &Path,
-) -> Vec<Drift> {
+pub fn validate_against_baseline(manifest: &BaselineManifest, repo_root: &Path) -> Vec<Drift> {
     let mut drifts = Vec::new();
 
     for surface in &manifest.surfaces {
@@ -349,13 +348,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
         let _ = stdin.write_all(bytes);
     }
     match child.wait_with_output() {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout)
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string()
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_string(),
         _ => String::new(),
     }
 }
@@ -480,7 +477,9 @@ pub fn plasma_color_schemes() -> BrandingCheck {
         label: "plasma_color_schemes".into(),
         path: base.clone(),
         found: Path::new(&base).exists(),
-        matches: list_files_matching(&base, 20, |name| name.starts_with("RAGOS") && name.ends_with(".colors")),
+        matches: list_files_matching(&base, 20, |name| {
+            name.starts_with("RAGOS") && name.ends_with(".colors")
+        }),
     }
 }
 
@@ -589,7 +588,11 @@ fn grep_ini_value(root: &str, key: &str) -> Option<String> {
         return None;
     }
     let entries = if path.is_dir() {
-        std::fs::read_dir(path).ok()?.flatten().map(|e| e.path()).collect()
+        std::fs::read_dir(path)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .collect()
     } else {
         vec![path.to_path_buf()]
     };
@@ -612,7 +615,9 @@ fn list_dirs(base: &str, limit: usize, filter_substr: Option<&[&str]>) -> Vec<St
 
 fn list_files_matching(base: &str, limit: usize, matches: impl Fn(&str) -> bool) -> Vec<String> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(base) else { return out };
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return out;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if matches(&name) {
@@ -625,9 +630,16 @@ fn list_files_matching(base: &str, limit: usize, matches: impl Fn(&str) -> bool)
     out
 }
 
-fn list_entries(base: &str, limit: usize, filter_substr: Option<&[&str]>, require_dir: bool) -> Vec<String> {
+fn list_entries(
+    base: &str,
+    limit: usize,
+    filter_substr: Option<&[&str]>,
+    require_dir: bool,
+) -> Vec<String> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(base) else { return out };
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return out;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if require_dir && !entry.path().is_dir() {
@@ -726,8 +738,14 @@ asset|sha256|themes/plymouth/ragos/background.jpg|49153a82a8e40a943e18e25aa3b26f
         assert_eq!(m.surfaces.len(), 2);
         assert_eq!(m.assets.len(), 1);
         assert_eq!(m.surfaces[0].surface, "plymouth");
-        assert_eq!(m.surfaces[0].sha256.as_deref(), Some("f19b58a7d4dd908739d68d19e7226149219ff86e6822ff2a12640b3a6c912a7e"));
-        assert_eq!(m.assets[0].sha256, "49153a82a8e40a943e18e25aa3b26f2cc5b8a40a9ec764a3247e26f267f0d22f");
+        assert_eq!(
+            m.surfaces[0].sha256.as_deref(),
+            Some("f19b58a7d4dd908739d68d19e7226149219ff86e6822ff2a12640b3a6c912a7e")
+        );
+        assert_eq!(
+            m.assets[0].sha256,
+            "49153a82a8e40a943e18e25aa3b26f2cc5b8a40a9ec764a3247e26f267f0d22f"
+        );
     }
 
     #[test]
@@ -769,10 +787,7 @@ surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ra
     #[test]
     fn test_baseline_validate_clean_run_no_drift() {
         // Synthetic repo with one surface + matching config|sha256 + one asset.
-        let tmp = std::env::temp_dir().join(format!(
-            "gar-baseline-clean-{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("gar-baseline-clean-{}", std::process::id()));
         std::fs::create_dir_all(tmp.join("themes/plymouth")).unwrap();
         std::fs::write(tmp.join("themes/plymouth/plymouth.nix"), "{ ... }").unwrap();
 
@@ -792,10 +807,7 @@ surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ra
     #[test]
     fn test_baseline_validate_detects_surface_missing() {
         // Synthetic repo without the surface path declared in manifest.
-        let tmp = std::env::temp_dir().join(format!(
-            "gar-baseline-miss-{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("gar-baseline-miss-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         // Note: tmp/themes/plymouth/plymouth.nix is NOT created.
 
@@ -813,10 +825,7 @@ surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ra
     #[test]
     fn test_baseline_validate_detects_sha256_mismatch() {
         // Synthetic repo with a file whose sha256 doesn't match the manifest.
-        let tmp = std::env::temp_dir().join(format!(
-            "gar-baseline-sha-{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("gar-baseline-sha-{}", std::process::id()));
         std::fs::create_dir_all(tmp.join("themes/plymouth")).unwrap();
         std::fs::write(tmp.join("themes/plymouth/plymouth.nix"), "real content").unwrap();
 
@@ -857,9 +866,7 @@ surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ra
              asset|sha256|themes/plasma/wallpapers/org.ragos.wallpaper.light/metadata.json|{}\n",
             real_hash
         );
-        let repo_root = Path::new(
-            "/home/rocha/Proyectos/garos-dev/garos",
-        );
+        let repo_root = Path::new("/home/rocha/Proyectos/garos-dev/garos");
         let m = parse_baseline_manifest_str(&content).unwrap();
         let drifts = validate_against_baseline(&m, repo_root);
         assert!(drifts.is_empty(), "expected no drift, got: {:?}", drifts);

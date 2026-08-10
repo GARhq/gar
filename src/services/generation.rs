@@ -59,10 +59,7 @@ pub fn read_generation_kernel_params(path: &Path) -> Result<String> {
     }
     let raw = std::fs::read_to_string(&sidecar)?;
     // Collapse all whitespace runs (incl. newlines) to a single space, trim edges.
-    let normalized: String = raw
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let normalized: String = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     Ok(normalized)
 }
 
@@ -379,7 +376,10 @@ mod tests {
 
     #[test]
     fn test_runtime_source_enum_parse_runtime() {
-        assert_eq!(RuntimeSource::parse("runtime"), Some(RuntimeSource::Runtime));
+        assert_eq!(
+            RuntimeSource::parse("runtime"),
+            Some(RuntimeSource::Runtime)
+        );
     }
 
     #[test]
@@ -404,6 +404,9 @@ mod tests {
     #[test]
     fn test_runtime_source_enum_as_str() {
         assert_eq!(RuntimeSource::Runtime.as_str(), "runtime");
-        assert_eq!(RuntimeSource::Other("/nix/store/abc".into()).as_str(), "/nix/store/abc");
+        assert_eq!(
+            RuntimeSource::Other("/nix/store/abc".into()).as_str(),
+            "/nix/store/abc"
+        );
     }
 }

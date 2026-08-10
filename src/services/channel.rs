@@ -291,8 +291,8 @@ pub fn target_installable(flake_root: &Path, requested_target: Option<&str>) -> 
     let flake_ref = if flake_root.to_string_lossy().contains(':') {
         flake_root.display().to_string()
     } else {
-        let normalized = std::fs::canonicalize(flake_root)
-            .unwrap_or_else(|_| flake_root.to_path_buf());
+        let normalized =
+            std::fs::canonicalize(flake_root).unwrap_or_else(|_| flake_root.to_path_buf());
         format!("path:{}", normalized.display())
     };
 
@@ -414,7 +414,10 @@ mod tests {
 
     #[test]
     fn test_channel_previous_pointer_names() {
-        assert_eq!(channel_previous_pointer(Channel::Generic), "previous-generic");
+        assert_eq!(
+            channel_previous_pointer(Channel::Generic),
+            "previous-generic"
+        );
         assert_eq!(channel_previous_pointer(Channel::Lab), "previous-lab");
         assert_eq!(channel_previous_pointer(Channel::Rescue), "previous-rescue");
     }
@@ -549,7 +552,8 @@ mod tests {
 
     #[test]
     fn test_resolve_client_target_legacy_physical_generic_warning() {
-        let (t, w) = resolve_client_target(Some("physical-generic"), DEFAULT_CLIENT_TARGET).unwrap();
+        let (t, w) =
+            resolve_client_target(Some("physical-generic"), DEFAULT_CLIENT_TARGET).unwrap();
         assert_eq!(t, "desktop-generic");
         assert!(w.is_some());
         assert!(w.unwrap().contains("physical-generic"));
@@ -586,8 +590,7 @@ mod tests {
 
     #[test]
     fn test_resolve_client_target_rescue_minimal() {
-        let (t, w) =
-            resolve_client_target(Some("rescue-minimal"), DEFAULT_CLIENT_TARGET).unwrap();
+        let (t, w) = resolve_client_target(Some("rescue-minimal"), DEFAULT_CLIENT_TARGET).unwrap();
         assert_eq!(t, "rescue-minimal");
         assert!(w.is_none());
     }

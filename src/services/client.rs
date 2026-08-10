@@ -39,8 +39,8 @@ pub fn current_manifest(images_root: &Path) -> Result<Option<ClientManifest>, St
         return Ok(None);
     }
     let bytes = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
-    let m: ClientManifest = serde_json::from_slice(&bytes)
-        .map_err(|e| format!("parse {}: {}", path.display(), e))?;
+    let m: ClientManifest =
+        serde_json::from_slice(&bytes).map_err(|e| format!("parse {}: {}", path.display(), e))?;
     Ok(Some(m))
 }
 
@@ -143,7 +143,8 @@ mod tests {
 
     #[test]
     fn test_manifest_returns_none_when_missing() {
-        let tmp = std::env::temp_dir().join(format!("gar-client-mf-missing-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("gar-client-mf-missing-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let m = current_manifest(&tmp).unwrap();
         assert!(m.is_none());
@@ -166,18 +167,21 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("gar-client-inv-{}", std::process::id()));
         std::fs::write(&tmp, "{ clients = []; }\n").unwrap();
         assert_eq!(inventory_text(&tmp), "{ clients = []; }\n");
-        let missing = std::env::temp_dir().join(format!("gar-client-inv-no-{}.nope", std::process::id()));
+        let missing =
+            std::env::temp_dir().join(format!("gar-client-inv-no-{}.nope", std::process::id()));
         assert_eq!(inventory_text(&missing), "");
     }
 
     #[test]
     fn test_collect_report_counts() {
-        let tmp_img = std::env::temp_dir().join(format!("gar-client-cr-img-{}", std::process::id()));
+        let tmp_img =
+            std::env::temp_dir().join(format!("gar-client-cr-img-{}", std::process::id()));
         let current = tmp_img.join("current");
         std::fs::create_dir_all(&current).unwrap();
         std::fs::write(current.join("manifest.json"), r#"{"id":"v1"}"#).unwrap();
 
-        let tmp_inv = std::env::temp_dir().join(format!("gar-client-cr-inv-{}", std::process::id()));
+        let tmp_inv =
+            std::env::temp_dir().join(format!("gar-client-cr-inv-{}", std::process::id()));
         std::fs::write(&tmp_inv, "{ clients = []; }\n").unwrap();
 
         let r = collect_report(&tmp_img, &tmp_inv);
@@ -191,9 +195,11 @@ mod tests {
 
     #[test]
     fn test_report_serializes_with_all_fields() {
-        let tmp_img = std::env::temp_dir().join(format!("gar-client-cs-img-{}", std::process::id()));
+        let tmp_img =
+            std::env::temp_dir().join(format!("gar-client-cs-img-{}", std::process::id()));
         std::fs::create_dir_all(&tmp_img).unwrap();
-        let tmp_inv = std::env::temp_dir().join(format!("gar-client-cs-inv-{}", std::process::id()));
+        let tmp_inv =
+            std::env::temp_dir().join(format!("gar-client-cs-inv-{}", std::process::id()));
         std::fs::write(&tmp_inv, "").unwrap();
         let r = collect_report(&tmp_img, &tmp_inv);
         let json = serde_json::to_string(&r).unwrap();

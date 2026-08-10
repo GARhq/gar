@@ -150,16 +150,16 @@ pub fn with_lock<F, T>(lock_path: &Path, label: &str, f: F) -> Result<T>
 where
     F: FnOnce() -> Result<T>,
 {
-    with_lock_timeout(lock_path, label, Duration::from_secs(DEFAULT_TIMEOUT_SECS), f)
+    with_lock_timeout(
+        lock_path,
+        label,
+        Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+        f,
+    )
 }
 
 /// Run a closure while holding the global lock with custom timeout.
-pub fn with_lock_timeout<F, T>(
-    lock_path: &Path,
-    label: &str,
-    timeout: Duration,
-    f: F,
-) -> Result<T>
+pub fn with_lock_timeout<F, T>(lock_path: &Path, label: &str, timeout: Duration, f: F) -> Result<T>
 where
     F: FnOnce() -> Result<T>,
 {
@@ -234,11 +234,7 @@ mod tests {
     use std::env;
 
     fn temp_lock(name: &str) -> PathBuf {
-        env::temp_dir().join(format!(
-            "gar-flock-{}-{}.lock",
-            name,
-            std::process::id()
-        ))
+        env::temp_dir().join(format!("gar-flock-{}-{}.lock", name, std::process::id()))
     }
 
     fn cleanup(path: &Path) {
@@ -374,12 +370,8 @@ mod tests {
         };
 
         // Try to acquire via with_lock with short timeout — must fail.
-        let r: Result<()> = with_lock_timeout(
-            &path,
-            "contended",
-            Duration::from_millis(300),
-            || Ok(()),
-        );
+        let r: Result<()> =
+            with_lock_timeout(&path, "contended", Duration::from_millis(300), || Ok(()));
         assert!(matches!(r, Err(GarError::LockHeld(_))));
 
         cleanup(&path);

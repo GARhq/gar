@@ -18,20 +18,15 @@ pub async fn dispatch(cmd: GroupCmd) -> Result<()> {
             groupname,
             description,
             storage_quota,
-        } => {
-            cmd_add(
-                &groupname,
-                description.as_deref(),
-                storage_quota.as_deref(),
-            )
-            .await
-        }
+        } => cmd_add(&groupname, description.as_deref(), storage_quota.as_deref()).await,
         GroupCmd::List => cmd_list().await,
         GroupCmd::Delete { groupname, archive } => cmd_delete(&groupname, archive).await,
         GroupCmd::Chmod { groupname, perms } => cmd_chmod(&groupname, &perms).await,
-        GroupCmd::Members { groupname, add, remove } => {
-            cmd_members(&groupname, add.as_deref(), remove.as_deref()).await
-        }
+        GroupCmd::Members {
+            groupname,
+            add,
+            remove,
+        } => cmd_members(&groupname, add.as_deref(), remove.as_deref()).await,
         GroupCmd::Permissions { groupname } => cmd_permissions(&groupname).await,
         GroupCmd::EnsureDefaults => cmd_ensure_defaults().await,
     }
@@ -163,10 +158,17 @@ fn report_existing(name: &str, cfg: &Config) -> Result<()> {
     let entry = catalog.get(name);
     if cfg.json_output {
         let (description, storage, quota, gid) = match entry {
-            Some(e) => (e.description.clone(), e.storage_path.clone(), e.quota.clone(), e.gid),
+            Some(e) => (
+                e.description.clone(),
+                e.storage_path.clone(),
+                e.quota.clone(),
+                e.gid,
+            ),
             None => (
                 "RAGOS Group".into(),
-                group_system::sector_path(&cfg.storage_base, name).display().to_string(),
+                group_system::sector_path(&cfg.storage_base, name)
+                    .display()
+                    .to_string(),
                 "100G".into(),
                 group_system::group_gid(name).unwrap_or(0),
             ),
@@ -180,7 +182,10 @@ fn report_existing(name: &str, cfg: &Config) -> Result<()> {
             catalog_updated: false,
         })?;
     } else {
-        output::ok(format!("grupo permanente '{}' ja existe (idempotente)", name));
+        output::ok(format!(
+            "grupo permanente '{}' ja existe (idempotente)",
+            name
+        ));
     }
     Ok(())
 }
@@ -208,12 +213,7 @@ pub async fn cmd_list() -> Result<()> {
             }
             let entry = catalog.get(&name);
             let (description, quota_str, gid, _) = match entry {
-                Some(e) => (
-                    e.description.clone(),
-                    e.quota.clone(),
-                    e.gid,
-                    (),
-                ),
+                Some(e) => (e.description.clone(), e.quota.clone(), e.gid, ()),
                 None => (
                     "—".into(),
                     "—".into(),
@@ -315,11 +315,7 @@ pub async fn cmd_delete(name: &str, archive: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn cmd_members(
-    name: &str,
-    add: Option<&str>,
-    remove: Option<&str>,
-) -> Result<()> {
+pub async fn cmd_members(name: &str, add: Option<&str>, remove: Option<&str>) -> Result<()> {
     let cfg = Config::from_env()?;
     if name.is_empty() {
         return Err(GarError::invalid_argument(

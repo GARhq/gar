@@ -111,11 +111,7 @@ mod tests {
     fn test_summary_serializes_with_healthy_flag() {
         let r = branding::collect_report(&Config::default());
         let healthy = r.fail_count == 0;
-        let json = serde_json::to_string(&BrandingSummary {
-            report: r,
-            healthy,
-        })
-        .unwrap();
+        let json = serde_json::to_string(&BrandingSummary { report: r, healthy }).unwrap();
         assert!(json.contains("\"healthy\""));
         assert!(json.contains("\"ok_count\""));
     }
