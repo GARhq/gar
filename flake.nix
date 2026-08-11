@@ -25,10 +25,7 @@
         rustToolchain = pkgs.rustc;
         cargo = pkgs.cargo;
       in {
-        packages.default = pkgs.callPackage ./default.nix {
-          rustc = rustToolchain;
-          cargo = cargo;
-        };
+        packages.default = pkgs.callPackage ./default.nix { };
 
         apps.default = {
           type = "app";
