@@ -14,7 +14,8 @@
   description = "GAR CLI — Unified manager for GAROS diskless clients and NixOS server";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # K-008: migração NixOS 26.05 LTS
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
