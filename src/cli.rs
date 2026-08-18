@@ -200,6 +200,37 @@ pub enum ClientCmd {
     /// Diagnose session/home/published version of client
     #[command(name = "session-doctor")]
     SessionDoctor,
+
+    /// List known clients from the GAROS inventory (best-effort).
+    #[command(name = "list", alias = "ls")]
+    List {
+        /// Emit JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Send Wake-on-LAN magic packet(s) to a client MAC address.
+    #[command(name = "wake")]
+    Wake {
+        /// Target MAC address (XX:XX:XX:XX:XX:XX or XX-XX-XX-XX-XX-XX)
+        mac: String,
+
+        /// UDP destination port (default 9 — canonical WOL port)
+        #[arg(long, default_value_t = 9)]
+        port: u16,
+
+        /// Number of magic packets to send (default 3 — most NICs accept any)
+        #[arg(long, default_value_t = 3)]
+        count: u8,
+
+        /// Broadcast address override (default 255.255.255.255)
+        #[arg(long)]
+        broadcast: Option<String>,
+
+        /// Emit JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Branding subcommands.
