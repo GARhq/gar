@@ -23,7 +23,7 @@ pub async fn dispatch(cmd: ServerCmd) -> Result<()> {
         ServerCmd::Rollback => cmd_rollback().await,
         ServerCmd::Update => cmd_update().await,
         ServerCmd::Clean => cmd_clean().await,
-        ServerCmd::Check => cmd_check().await,
+        ServerCmd::Check { inventory, allow_empty } => cmd_check(inventory, allow_empty).await,
         ServerCmd::Repl => cmd_repl(),
         ServerCmd::Path => cmd_path(),
         ServerCmd::Enter => cmd_enter(),
@@ -145,17 +145,31 @@ pub async fn cmd_clean() -> Result<()> {
 }
 
 /// `gar server check` — nix flake check.
-pub async fn cmd_check() -> Result<()> {
+pub async fn cmd_check(inventory: Option<std::path::PathBuf>, allow_empty: bool) -> Result<()> {
     let cfg = Config::from_env()?;
     output::section("==> gar server check");
-    if !cfg.flake_path.is_dir() {
-        return Err(GarError::config(format!(
-            "flake local ausente em {}",
-            cfg.flake_path.display()
-        )));
+    if let Some(inv_path) = inventory {
+        if !inv_path.exists() {
+            return Err(GarError::config(format!(
+                "arquivo de inventário ausente em {}",
+                inv_path.display()
+            )));
+        }
+        let errors = nix::validate_inventory(&cfg.flake_path, &inv_path, allow_empty).await?;
+        if !errors.is_empty() {
+            return Err(GarError::validation(errors.join("\n")));
+        }
+        output::ok(format!("validação do inventário OK para {}", inv_path.display()));
+    } else {
+        if !cfg.flake_path.is_dir() {
+            return Err(GarError::config(format!(
+                "flake local ausente em {}",
+                cfg.flake_path.display()
+            )));
+        }
+        nix::flake_check(&cfg.flake_path).await?;
+        output::ok(format!("flake check OK em {}", cfg.flake_path.display()));
     }
-    nix::flake_check(&cfg.flake_path).await?;
-    output::ok(format!("flake check OK em {}", cfg.flake_path.display()));
     Ok(())
 }
 

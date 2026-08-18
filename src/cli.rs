@@ -112,7 +112,15 @@ pub enum ServerCmd {
     /// Clean old NixOS generations (nh clean or fallback)
     Clean,
     /// Run nix flake check
-    Check,
+    Check {
+        /// Validate the given clients inventory file (e.g. clients.nix)
+        #[arg(long)]
+        inventory: Option<std::path::PathBuf>,
+
+        /// Allow empty inventory during validation (sets requireNonEmpty to false)
+        #[arg(long)]
+        allow_empty: bool,
+    },
     /// Open nix repl on local flake
     Repl,
     /// Print operational flake path
