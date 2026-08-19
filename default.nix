@@ -20,6 +20,7 @@
 , iproute2
 , curl
 , systemd
+, makeWrapper
 }:
 
 rustPlatform.buildRustPackage {
@@ -32,7 +33,7 @@ rustPlatform.buildRustPackage {
     lockFile = ./Cargo.lock;
   };
 
-  nativeBuildInputs = [ pkg-config ];
+  nativeBuildInputs = [ pkg-config makeWrapper ];
 
   buildInputs = [ openssl ];
 
