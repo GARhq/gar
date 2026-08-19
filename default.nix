@@ -36,6 +36,8 @@ rustPlatform.buildRustPackage {
 
   buildInputs = [ openssl ];
 
+  checkFlags = [ "--" "--test-threads=1" ];
+
   meta = with lib; {
     description = "GAR CLI — Unified manager for GAROS diskless clients and NixOS server";
     license = licenses.mit;
