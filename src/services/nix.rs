@@ -29,13 +29,21 @@ pub async fn validate_inventory(
     inventory_path: &Path,
     allow_empty: bool,
 ) -> Result<Vec<String>> {
-    let lib_path = flake_dir.join("server/network/clients-inventory-lib.nix");
-    if !lib_path.exists() {
-        return Err(crate::error::GarError::config(format!(
-            "clients-inventory-lib.nix não encontrado em {}",
-            lib_path.display()
-        )));
-    }
+    let lib_path = {
+        let dir_path = flake_dir.join("server/network/clients-inventory-lib");
+        let file_path = flake_dir.join("server/network/clients-inventory-lib.nix");
+        if dir_path.exists() {
+            dir_path
+        } else if file_path.exists() {
+            file_path
+        } else {
+            return Err(crate::error::GarError::config(format!(
+                "clients-inventory-lib não encontrado em {} ou {}",
+                file_path.display(),
+                dir_path.display()
+            )));
+        }
+    };
 
     let require_non_empty = if allow_empty { "false" } else { "true" };
 

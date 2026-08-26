@@ -35,7 +35,8 @@ pub async fn useradd_to_group(username: &str, group: &str) -> Result<()> {
 }
 
 pub async fn userdel_from_group(username: &str, group: &str) -> Result<()> {
-    let _ = crate::services::shell::run_success("gpasswd", &["-d", username, group]).await;
+    let _ = crate::services::shell::run_success("gpasswd", 
+    &["-d", username, group]).await;
     Ok(())
 }
 
