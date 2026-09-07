@@ -30,16 +30,15 @@ pub async fn validate_inventory(
     allow_empty: bool,
 ) -> Result<Vec<String>> {
     let lib_path = {
-        let dir_path = flake_dir.join("server/network/clients-inventory-lib");
-        let file_path = flake_dir.join("server/network/clients-inventory-lib.nix");
+        // K-123 fix: server/inventory/lib/default.nix (era server/network/clients-inventory-lib/)
+        // K-117B extraiu a biblioteca de `server/network/clients-inventory-lib/` para
+        // `server/inventory/lib/`. K-117B não atualizou `gar`; este branch fecha o gap.
+        let dir_path = flake_dir.join("server/inventory/lib/default.nix");
         if dir_path.exists() {
             dir_path
-        } else if file_path.exists() {
-            file_path
         } else {
             return Err(crate::error::GarError::config(format!(
-                "clients-inventory-lib não encontrado em {} ou {}",
-                file_path.display(),
+                "clients-inventory-lib não encontrado em {}",
                 dir_path.display()
             )));
         }
