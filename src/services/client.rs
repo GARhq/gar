@@ -62,9 +62,9 @@ pub fn inventory_text(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
-/// Canonical inventory path (`/etc/ragos-inventory/clients.nix` by default).
+/// Canonical inventory path (`/etc/garos-inventory/clients.nix` by default).
 pub fn default_inventory_path() -> PathBuf {
-    PathBuf::from("/etc/ragos-inventory/clients.nix")
+    PathBuf::from("/etc/garos-inventory/clients.nix")
 }
 
 /// Aggregate report for `gar client session-doctor`.

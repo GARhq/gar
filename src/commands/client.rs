@@ -121,7 +121,7 @@ pub async fn cmd_session_doctor() -> Result<()> {
 
 /// `gar client list` — enumerate known clients from the JSON inventory.
 ///
-/// Phase 0.5 will migrate `/etc/ragos-inventory/clients.nix` → JSON.
+/// Phase 0.5 will migrate `/etc/garos-inventory/clients.nix` → JSON.
 /// Until then, an empty list with a clear message is the expected
 /// output on a fresh system.
 pub async fn cmd_list(json_flag: bool) -> Result<()> {
