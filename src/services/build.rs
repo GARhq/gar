@@ -58,8 +58,11 @@ pub fn build_or_reuse_system(flake_root: &Path, target: &str, channel: &str) -> 
         ));
     }
 
+    // K-130R-1 (2026-09-07): garos/flake.nix publishes
+    // `nixosConfigurations.garos-client-<profile>` (canonical since rebrand).
+    // The `ragos-client-*` attribute was the legacy name and no longer exists.
     let installable = format!(
-        "path:{flake}#nixosConfigurations.ragos-client-{target}.config.system.build.toplevel",
+        "path:{flake}#nixosConfigurations.garos-client-{target}.config.system.build.toplevel",
         flake = flake_root.display(),
         target = target
     );

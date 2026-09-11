@@ -84,8 +84,9 @@ builtins.toJSON (
     }
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
-    let errors: Vec<String> = serde_json::from_str(&stdout_str)
-        .map_err(|e| crate::error::GarError::config(format!("Falha ao parsear JSON do nix-instantiate: {}", e)))?;
+    let errors: Vec<String> = serde_json::from_str(&stdout_str).map_err(|e| {
+        crate::error::GarError::config(format!("Falha ao parsear JSON do nix-instantiate: {}", e))
+    })?;
 
     Ok(errors)
 }

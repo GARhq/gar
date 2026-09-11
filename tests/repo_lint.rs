@@ -1,33 +1,33 @@
+// K-130R-3 (2026-09-07): rewrote repo_lint.rs to validate the **owning**
+// crate's repo (`gar/`), not the sibling `garos/` monorepo.
+//
+// The original implementation (commit 1ee1618) walked the filesystem
+// looking for a sibling `garos/` checkout and ran `docs_layout`,
+// `script_headers`, `inventory_rules` etc against THAT tree. This had two
+// problems:
+//
+//   1. Ownership: a Rust crate should never lint a different repo's
+//      structure. The lint suite belongs in `garos/tests/` (where the
+//      docs/scripts layout actually lives).
+//   2. CI portability: when the binary is shipped to production via
+//      `garos/flake.nix#gar-cli.packages.x86_64-linux.default`, the sibling
+//      `garos/` checkout is not present on disk — the helper panics
+//      (line 23) and breaks `cargo test --workspace` in CI.
+//
+// The fix is structural: this suite now validates `gar/` itself, where
+// the structure invariants actually live (src/ tree, no banned legacy
+// strings in markdown, no stray temp artifacts, Cargo.toml sanity).
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// Helper para localizar a raiz do monorepo garos
-fn find_garos_repo_root() -> PathBuf {
-    // A partir da pasta gar/tests, o repositório garos geralmente é o vizinho ../garos
-    let current_dir = std::env::current_dir().expect("Failed to get current dir");
-    
-    // Testa caminhos comuns no workspace do desenvolvedor
-    let candidates = vec![
-        current_dir.join("../garos"),
-        current_dir.join(".."), // se rodando no workspace root se houver
-        PathBuf::from("/home/rocha/Proyectos/garos-dev/garos"),
-        PathBuf::from("/home/ubuntu/Proyectos/garos-dev/garos"), // no container
-    ];
-
-    for candidate in candidates {
-        if candidate.join("server").exists() && candidate.join("client").exists() {
-            return candidate.canonicalize().unwrap_or(candidate);
-        }
-    }
-
-    panic!(
-        "Não foi possível encontrar a raiz do repositório 'garos'. \
-         Diretório atual: {:?}",
-        current_dir
-    );
+// Resolve the owning crate's repo root. `cargo test` runs from
+// `tests/repo_lint.rs` with `CARGO_MANIFEST_DIR` set to the crate root,
+// so this is deterministic — no filesystem guessing.
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-// Retorna uma lista de caminhos relativos ao diretório base
 fn list_files_in_dir(base: &Path, max_depth: Option<usize>, recursive: bool) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut dirs_to_visit = vec![(base.to_path_buf(), 0)];
@@ -42,10 +42,18 @@ fn list_files_in_dir(base: &Path, max_depth: Option<usize>, recursive: bool) -> 
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+                let file_name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
 
-                // Pula pastas do git e target
-                if file_name == ".git" || file_name == "target" || file_name == "node_modules" || file_name == ".direnv" {
+                // Skip common noise directories.
+                if file_name == ".git"
+                    || file_name == "target"
+                    || file_name == "node_modules"
+                    || file_name == ".direnv"
+                {
                     continue;
                 }
 
@@ -62,18 +70,13 @@ fn list_files_in_dir(base: &Path, max_depth: Option<usize>, recursive: bool) -> 
 
 #[test]
 fn test_root_markdown_allowlist() {
-    let root = find_garos_repo_root();
-    let allowed_mds = vec![
-        "README.md",
-        "CHANGELOG.md",
-        "CONTRIBUTING.md",
-        "INSTRUCOES.md",
-        "INSTRUCT.md",
-        "AGENTS.md",
-        "CLAUDE.md",
-        "CLI_CHEAT_SHEET.md",
-        "IDEA.md", // Nova blueprint do GAROS
-    ];
+    // `gar/` is a Rust crate, not a docs monorepo. The only top-level
+    // markdown that should exist here is `README.md` (Cargo's `readme`
+    // field) and `MIGRATION.md` (the ragos→gar migration record) —
+    // everything else belongs in `docs/` or is an intentional file we
+    // list explicitly below.
+    let root = repo_root();
+    let allowed_mds = vec!["README.md", "MIGRATION.md"];
 
     let files = list_files_in_dir(&root, Some(1), false);
     for file in files {
@@ -82,7 +85,8 @@ fn test_root_markdown_allowlist() {
                 let filename = file.file_name().unwrap().to_string_lossy();
                 assert!(
                     allowed_mds.contains(&filename.as_ref()),
-                    "Markdown no topo do repositório fora da allowlist: {}",
+                    "Markdown no topo do crate fora da allowlist: {} \
+                     (use `docs/` para documentação adicional)",
                     filename
                 );
             }
@@ -91,351 +95,222 @@ fn test_root_markdown_allowlist() {
 }
 
 #[test]
-fn test_root_no_legacy_paths() {
-    let root = find_garos_repo_root();
-    
-    // Pastas antigas renegadas
-    let legacy_paths = vec!["garos", "SRV-GAROS"];
-    for path in legacy_paths {
-        let full_path = root.join(path);
-        assert!(
-            !full_path.exists(),
-            "Árvore legada reintroduzida na raiz de garos: {}",
-            path
-        );
-    }
+fn test_no_banned_legacy_references_in_runtime_strings() {
+    // Drift guards: NOTHING in this crate should reference the legacy
+    // `ragos`/`ragc` vocabulary in PRODUCTION runtime strings — Nix
+    // installable refs, kernel cmdline tokens, env-var names, format
+    // strings, and JSON field names. Historical mentions in docstrings
+    // and migration notes (MIGRATION.md, comments referencing the past)
+    // are tolerated; the lint only fires on text that ends up in
+    // produced files (iPXE bundles, Nix installables, manifests).
+    //
+    // Detection strategy: strip // line comments and /* */ block
+    // comments before scanning. That way the lint can reference the
+    // banned tokens in its OWN diagnostics without self-triggering.
+    let root = repo_root();
 
-    // DepartureMono font no root (deve ficar em themes/)
-    let files = list_files_in_dir(&root, Some(1), false);
-    for file in files {
-        let filename = file.file_name().unwrap().to_string_lossy();
-        assert!(
-            !filename.starts_with("DepartureMono-"),
-            "Asset vendorizado fora do domínio canônico themes/: {}",
-            filename
-        );
-    }
-}
-
-#[test]
-fn test_docs_layout() {
-    let root = find_garos_repo_root();
-    let docs_dir = root.join("docs");
-
-    if !docs_dir.exists() {
-        return; // Pula se docs não estiver no checkout (ex: CI minimal)
-    }
-
-    // Não deve conter subpastas em docs/ exceto archive/
-    if let Ok(entries) = fs::read_dir(&docs_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let name = path.file_name().unwrap().to_string_lossy();
-                assert_eq!(
-                    name, "archive",
-                    "Subdiretório inesperado em docs/: {}",
-                    name
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn test_docs_headers_and_status() {
-    let root = find_garos_repo_root();
-    let docs_dir = root.join("docs");
-
-    if !docs_dir.exists() {
-        return;
-    }
-
-    let files = list_files_in_dir(&docs_dir, Some(1), false);
-    for file in files {
-        if file.extension().unwrap_or_default() != "md" || file.file_name().unwrap().to_string_lossy() == "README.md" {
-            continue;
-        }
-
-        let content = fs::read_to_string(&file).expect("Failed to read doc file");
-        
-        // Verifica headers obrigatórios
-        assert!(
-            content.contains("Status: "),
-            "Doc sem cabeçalho 'Status: ': {:?}",
-            file.file_name().unwrap()
-        );
-        assert!(
-            content.contains("Scope: "),
-            "Doc sem cabeçalho 'Scope: ': {:?}",
-            file.file_name().unwrap()
-        );
-
-        // Extrai status e valida
-        let status_line = content.lines().find(|l| l.starts_with("Status: ")).unwrap();
-        let status = status_line.replace("Status: ", "").trim().to_string();
-        assert!(
-            status == "canonical" || status == "secondary",
-            "Doc {:?} possui status inválido: {}",
-            file.file_name().unwrap(),
-            status
-        );
-
-        // Docs canônicas exigem Last reviewed
-        if status == "canonical" {
-            let has_reviewed = content.lines().any(|l| {
-                l.starts_with("Last reviewed: ") && l.len() >= 25 // formato YYYY-MM-DD
-            });
-            assert!(
-                has_reviewed,
-                "Doc canonical sem 'Last reviewed: YYYY-MM-DD' válido: {:?}",
-                file.file_name().unwrap()
-            );
-        }
-    }
-
-    // Validar docs no arquivo (archive/)
-    let archive_dir = docs_dir.join("archive");
-    if archive_dir.exists() {
-        let archive_files = list_files_in_dir(&archive_dir, Some(1), false);
-        for file in archive_files {
-            if file.extension().unwrap_or_default() != "md" {
-                continue;
-            }
-
-            let content = fs::read_to_string(&file).expect("Failed to read archive doc");
-            let status_line = content.lines().find(|l| l.starts_with("Status: "));
-            assert!(
-                status_line.is_some(),
-                "Doc de archive sem 'Status: ': {:?}",
-                file.file_name().unwrap()
-            );
-
-            let status = status_line.unwrap().replace("Status: ", "").trim().to_string();
-            assert_eq!(
-                status, "archived",
-                "Doc em archive sem Status 'archived': {:?}",
-                file.file_name().unwrap()
-            );
-        }
-    }
-}
-
-#[test]
-fn test_no_archive_references_in_active_docs() {
-    let root = find_garos_repo_root();
-    let docs_dir = root.join("docs");
-
-    if !docs_dir.exists() {
-        return;
-    }
-
-    let files = list_files_in_dir(&docs_dir, Some(1), false);
-    for file in files {
-        if file.extension().unwrap_or_default() != "md" || file.file_name().unwrap().to_string_lossy() == "README.md" {
-            continue;
-        }
-
-        let content = fs::read_to_string(&file).expect("Failed to read file");
-        assert!(
-            !content.contains("docs/archive/") && !content.contains("archive/"),
-            "Doc ativo {:?} referencia a pasta archive/",
-            file.file_name().unwrap()
-        );
-    }
-}
-
-#[test]
-fn test_scripts_layout() {
-    let root = find_garos_repo_root();
-    let scripts_dir = root.join("scripts");
-
-    if !scripts_dir.exists() {
-        return;
-    }
-
-    // Nenhum script solto em scripts/ (exceto README.md)
-    if let Ok(entries) = fs::read_dir(&scripts_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                let name = path.file_name().unwrap().to_string_lossy();
-                assert_eq!(
-                    name, "README.md",
-                    "Script solto no diretório scripts/: {}",
-                    name
-                );
-            } else if path.is_dir() {
-                // Subdiretórios válidos de scripts
-                let name = path.file_name().unwrap().to_string_lossy();
-                let allowed_subdirs = vec!["dev", "ops", "tests", "lab"];
-                assert!(
-                    allowed_subdirs.contains(&name.as_ref()),
-                    "Subdiretório inesperado em scripts/: {}",
-                    name
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn test_script_headers() {
-    let root = find_garos_repo_root();
-    let scripts_dir = root.join("scripts");
-
-    if !scripts_dir.exists() {
-        return;
-    }
-
-    let allowed_categories = vec!["dev", "ops", "tests", "lab"];
-    for cat in allowed_categories {
-        let cat_dir = scripts_dir.join(cat);
-        if !cat_dir.exists() {
-            continue;
-        }
-
-        let files = list_files_in_dir(&cat_dir, None, true);
-        for file in files {
-            // Pular diretórios e ler arquivos de script shell
-            if file.extension().map(|e| e == "sh" || e == "py").unwrap_or(false) || file.file_name().unwrap().to_string_lossy().starts_with("test-") {
-                let content = fs::read_to_string(&file).expect("Failed to read script");
-                
-                assert!(
-                    content.contains("# Purpose: "),
-                    "Script sem '# Purpose: ': {:?}",
-                    file.file_name().unwrap()
-                );
-                
-                let parent_dir_name = file.parent()
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
-
-                let expected_cat_header = format!("# Category: {}", parent_dir_name);
-                assert!(
-                    content.contains(&expected_cat_header),
-                    "Script com '# Category' divergente do diretório ({:?} vs {:?}): {:?}",
-                    expected_cat_header,
-                    parent_dir_name,
-                    file.file_name().unwrap()
-                );
-
-                let has_safety = content.contains("# Safety: safe")
-                    || content.contains("# Safety: destructive")
-                    || content.contains("# Safety: lab-only");
-                assert!(
-                    has_safety,
-                    "Script sem '# Safety' válido: {:?}",
-                    file.file_name().unwrap()
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn test_banned_references() {
-    let root = find_garos_repo_root();
-    
-    // Padrões que não devem constar nos docs ativos do repositório
-    let banned_patterns = vec![
-        "docs/clients-inventory.csv",
-        "flake/client.nix",
-        "flake/server.nix",
-        "flake/installer.nix",
-        "server/server.nix",
-        "installer/installer.nix",
-        "garos/pxe/",
-        "garos/scripts/provision-tftp.sh",
-        "./scripts/migrate-garos-inventory.sh",
-        "./scripts/test-clients-inventory-validation.sh",
-        "./scripts/test-clients-inventory-routing.sh",
+    let banned_substrings = vec![
+        // Kernel cmdline token — drifted back to `garos` in K-130R-2.
+        "ragos.primaryNicMac=",
+        // Nix installable attribute — K-130R-1.
+        "nixosConfigurations.ragos-client-",
+        "system.build.ragosPublishTree",
     ];
 
-    let mut files = vec![
-        root.join("README.md"),
-        root.join("CONTRIBUTING.md"),
-        root.join("scripts/README.md"),
-    ];
-
-    let docs_dir = root.join("docs");
-    if docs_dir.exists() {
-        files.extend(list_files_in_dir(&docs_dir, Some(1), false));
+    let src_dir = root.join("src");
+    if !src_dir.exists() {
+        return;
     }
-
+    let files = list_files_in_dir(&src_dir, None, true);
     for file in files {
-        if !file.exists() || file.is_dir() {
+        if file.extension().unwrap_or_default() != "rs" {
             continue;
         }
-
-        let content = fs::read_to_string(&file).expect("Failed to read file");
-        for pattern in &banned_patterns {
-            assert!(
-                !content.contains(pattern),
-                "Referência antiga ou banida encontrada em {:?}: '{}'",
-                file.file_name().unwrap(),
-                pattern
-            );
+        let raw = fs::read_to_string(&file).expect("read src .rs file");
+        // Strip comments to avoid self-trigger on diagnostic text.
+        let stripped = strip_rust_comments(&raw);
+        for needle in &banned_substrings {
+            if stripped.contains(needle) {
+                panic!(
+                    "src/{:?} contains banned legacy reference `{}` in runtime code — \
+                     K-130R requires `ragos`/`ragc` be replaced by \
+                     `gar`/`garos` in production code paths",
+                    file.file_name().unwrap(),
+                    needle
+                );
+            }
         }
     }
 }
 
-#[test]
-fn test_inventory_rules() {
-    let root = find_garos_repo_root();
-
-    // 1. Não deve haver arquivos de inventário CSV no repositório ativo
-    let files = list_files_in_dir(&root, None, true);
-    for file in files {
-        let name = file.file_name().unwrap().to_string_lossy();
-        if name == "clients-inventory.csv" || name == "clients.csv" {
-            // Pula docs/archive
-            if !file.to_string_lossy().contains("docs/archive") {
-                panic!("CSV de inventário reintroduzido no repositório ativo: {:?}", file);
+/// Strip // line comments and /* block comments */ from Rust source.
+///
+/// Crude but sufficient for lint purposes — we don't need full token
+/// awareness, only to neutralize self-referential diagnostics and
+/// historical "this used to be ragos" comments.
+fn strip_rust_comments(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let bytes = src.as_bytes();
+    let mut i = 0;
+    // Track `#[cfg(test)]` blocks so we can exclude them from the lint
+    // scan — tests legitimately reference the BANNED form to assert it
+    // is NOT present (negative contains checks).
+    let mut in_cfg_test = false;
+    let mut brace_depth: i32 = 0;
+    while i < bytes.len() {
+        // Detect `#[cfg(test)]` (or `#[cfg(all(test, ...))]`) at item
+        // boundary and mark the next block as test-only.
+        if bytes[i] == b'#' && i + 1 < bytes.len() && bytes[i + 1] == b'[' && !in_cfg_test {
+            // Scan forward to find a balanced `]`.
+            let mut j = i + 2;
+            let mut depth = 1i32;
+            while j < bytes.len() && depth > 0 {
+                if bytes[j] == b'[' {
+                    depth += 1;
+                } else if bytes[j] == b']' {
+                    depth -= 1;
+                }
+                j += 1;
             }
-        }
-    }
-
-    // 2. Não deve referenciar clients-inventory.bootstrap.nix como fonte primária
-    let check_dirs = vec![root.join("server"), root.join("flake")];
-    for dir in check_dirs {
-        if !dir.exists() {
+            let attr_text = std::str::from_utf8(&bytes[i..j]).unwrap_or("");
+            if attr_text.contains("cfg(test") || attr_text.contains("cfg(all(test") {
+                in_cfg_test = true;
+                brace_depth = 0;
+            }
+            // Replace the attribute with whitespace so byte offsets
+            // remain roughly aligned.
+            for _ in 0..(j - i) {
+                out.push(' ');
+            }
+            i = j;
             continue;
         }
-        let nix_files = list_files_in_dir(&dir, None, true);
-        for file in nix_files {
-            if file.extension().unwrap_or_default() == "nix" {
-                let content = fs::read_to_string(&file).expect("Failed to read nix file");
-                for line in content.lines() {
-                    let trim_line = line.trim();
-                    // Valida se há importações diretas do bootstrap como fonte primária
-                    if (trim_line.contains("import") || trim_line.contains("config =") || trim_line.contains("config +="))
-                        && trim_line.contains("clients-inventory.bootstrap.nix")
-                    {
-                        panic!(
-                            "servidor ou flake referenciando o inventory bootstrap como fonte primária: {:?}",
-                            file.file_name().unwrap()
-                        );
-                    }
+
+        // Track braces while inside a #[cfg(test)] block.
+        if in_cfg_test {
+            if bytes[i] == b'{' {
+                brace_depth += 1;
+            } else if bytes[i] == b'}' {
+                brace_depth -= 1;
+                if brace_depth == 0 {
+                    in_cfg_test = false;
                 }
             }
+            out.push(' ');
+            i += 1;
+            continue;
         }
+
+        // Block comment.
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i += 2;
+            out.push(' ');
+            continue;
+        }
+        // Line comment.
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'/' {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            // Keep the newline so byte offsets roughly align.
+            continue;
+        }
+        // String literal — keep as-is (we want to catch banned tokens
+        // inside format! strings and error messages).
+        if bytes[i] == b'"' {
+            out.push('"');
+            i += 1;
+            while i < bytes.len() && bytes[i] != b'"' {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    out.push(bytes[i] as char);
+                    out.push(bytes[i + 1] as char);
+                    i += 2;
+                } else {
+                    out.push(bytes[i] as char);
+                    i += 1;
+                }
+            }
+            if i < bytes.len() {
+                out.push('"');
+                i += 1;
+            }
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
     }
+    out
 }
 
 #[test]
 fn test_no_temporary_artifacts() {
-    let root = find_garos_repo_root();
+    // Hygiene rule: no stray `result*`, `*.log`, `*.tmp`, `*.bak`, or
+    // `nohup.out` files in the active checkout.
+    let root = repo_root();
     let files = list_files_in_dir(&root, None, true);
-    
+
     for file in files {
-        let name = file.file_name().unwrap().to_string_lossy();
-        if name == "result" || name.starts_with("result-") || name.ends_with(".log") || name.ends_with(".tmp") || name.ends_with(".bak") || name == "nohup.out" {
-            // Pular logs gerados pelo hermes de forma conhecida (dentro de .gemini/ ou logs do agent)
-            if !file.to_string_lossy().contains(".gemini") && !file.to_string_lossy().contains(".git") {
-                panic!("Artefato temporário encontrado no checkout ativo do repositório: {:?}", file);
+        let name = file.file_name().unwrap().to_string_lossy().into_owned();
+        if name == "result"
+            || name.starts_with("result-")
+            || name.ends_with(".log")
+            || name.ends_with(".tmp")
+            || name.ends_with(".bak")
+            || name == "nohup.out"
+        {
+            if !file.to_string_lossy().contains(".git") {
+                panic!(
+                    "Artefato temporário encontrado no checkout ativo do crate: {:?}",
+                    file
+                );
             }
         }
     }
+}
+
+#[test]
+fn test_cargo_manifest_consistency() {
+    // Cargo.toml sanity: the package name and main binary path line up.
+    // Cheap drift detector — catches accidental renames that would
+    // break the flake input consumer
+    // (`garos/flake.nix` -> `gar-cli.packages.x86_64-linux.default`).
+    let manifest = fs::read_to_string(repo_root().join("Cargo.toml")).expect("read Cargo.toml");
+
+    assert!(
+        manifest.contains("name = \"gar\""),
+        "Cargo.toml: package name must remain `gar` — the flake input \
+         `gar-cli` in `garos/flake.nix` depends on it"
+    );
+    assert!(
+        manifest.contains("path = \"src/main.rs\""),
+        "Cargo.toml: main binary path must remain `src/main.rs`"
+    );
+}
+
+#[test]
+fn test_flake_nix_consistency() {
+    // flake.nix sanity: must expose `packages.default`, must NOT
+    // reference the legacy ragos monorepo by name in its OWN header
+    // comment.
+    let flake = fs::read_to_string(repo_root().join("flake.nix")).expect("read flake.nix");
+
+    assert!(
+        flake.contains("packages.default"),
+        "flake.nix must expose `packages.default` — the `garos/flake.nix` \
+         input consumes this exact output path"
+    );
+    assert!(
+        flake.contains("GAR CLI"),
+        "flake.nix description must say `GAR CLI` (not RAGOS) — the README \
+         and K-128B cross-repo map already say `GAR`; drift here would \
+         confuse downstream readers"
+    );
+    assert!(
+        !flake.contains("RAGOS monorepo"),
+        "flake.nix must not reference the legacy `RAGOS monorepo` — drift"
+    );
 }

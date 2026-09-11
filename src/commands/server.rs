@@ -23,7 +23,10 @@ pub async fn dispatch(cmd: ServerCmd) -> Result<()> {
         ServerCmd::Rollback => cmd_rollback().await,
         ServerCmd::Update => cmd_update().await,
         ServerCmd::Clean => cmd_clean().await,
-        ServerCmd::Check { inventory, allow_empty } => cmd_check(inventory, allow_empty).await,
+        ServerCmd::Check {
+            inventory,
+            allow_empty,
+        } => cmd_check(inventory, allow_empty).await,
         ServerCmd::Repl => cmd_repl(),
         ServerCmd::Path => cmd_path(),
         ServerCmd::Enter => cmd_enter(),
@@ -159,7 +162,10 @@ pub async fn cmd_check(inventory: Option<std::path::PathBuf>, allow_empty: bool)
         if !errors.is_empty() {
             return Err(GarError::validation(errors.join("\n")));
         }
-        output::ok(format!("validação do inventário OK para {}", inv_path.display()));
+        output::ok(format!(
+            "validação do inventário OK para {}",
+            inv_path.display()
+        ));
     } else {
         if !cfg.flake_path.is_dir() {
             return Err(GarError::config(format!(

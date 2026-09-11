@@ -259,12 +259,15 @@ pub fn resolve_client_target(
 /// Build the Nix installable reference for a target.
 ///
 /// Mirrors bash `target_installable` (publish.sh:153-182). Produces a
-/// `path:<flake>#nixosConfigurations.ragos-client-<host>.config.system.build.ragosPublishTree`
+/// `path:<flake>#nixosConfigurations.garos-client-<profile>.config.system.build.garosPublishTree`
 /// reference suitable for `nix build`.
 ///
 /// **Notes:**
-/// - References `nixosConfigurations.ragos-client-*` (not `gar-client-*`)
-///   because renaming lives in a dedicated Phase 7+ — not this brief.
+/// - References `nixosConfigurations.garos-client-*` (canonical post-rebrand
+///   since `garos/flake.nix` publish block; K-130R-1, 2026-09-07).
+///   `nixosConfigurations.ragos-client-*` no longer exists.
+/// - The build attribute is `system.build.garosPublishTree` (not
+///   `garPublishTree` / `garosPublishTree`) — see also `garos/client/profiles/*`.
 /// - If `flake_root` already contains a `:` (i.e. a Nix scheme like
 ///   `git+file://` or `path:`), it is left untouched; otherwise the
 ///   `path:` prefix is added. This matches the bash behavior of
@@ -298,16 +301,16 @@ pub fn target_installable(flake_root: &Path, requested_target: Option<&str>) -> 
 
     let config_attr = match resolved.as_str() {
         "desktop-generic" => {
-            "nixosConfigurations.ragos-client-desktop-generic.config.system.build.ragosPublishTree"
+            "nixosConfigurations.garos-client-desktop-generic.config.system.build.garosPublishTree"
         }
         "desktop-lab" => {
-            "nixosConfigurations.ragos-client-desktop-lab.config.system.build.ragosPublishTree"
+            "nixosConfigurations.garos-client-desktop-lab.config.system.build.garosPublishTree"
         }
         "hyperv-debug" => {
-            "nixosConfigurations.ragos-client-hyperv-debug.config.system.build.ragosPublishTree"
+            "nixosConfigurations.garos-client-hyperv-debug.config.system.build.garosPublishTree"
         }
         "rescue-minimal" => {
-            "nixosConfigurations.ragos-client-rescue-minimal.config.system.build.ragosPublishTree"
+            "nixosConfigurations.garos-client-rescue-minimal.config.system.build.garosPublishTree"
         }
         other => {
             return Err(GarError::invalid_argument(format!(
@@ -629,7 +632,7 @@ mod tests {
         let s = target_installable(flake, Some("desktop-generic")).unwrap();
         assert_eq!(
             s,
-            "path:/etc/gar#nixosConfigurations.ragos-client-desktop-generic.config.system.build.ragosPublishTree"
+            "path:/etc/gar#nixosConfigurations.garos-client-desktop-generic.config.system.build.garosPublishTree"
         );
     }
 
@@ -637,7 +640,7 @@ mod tests {
     fn test_target_installable_desktop_lab() {
         let flake = std::path::Path::new("/etc/gar");
         let s = target_installable(flake, Some("desktop-lab")).unwrap();
-        assert!(s.contains("ragos-client-desktop-lab"));
+        assert!(s.contains("garos-client-desktop-lab"));
         assert!(s.contains("path:/etc/gar#"));
     }
 
@@ -645,15 +648,15 @@ mod tests {
     fn test_target_installable_hyperv_debug() {
         let flake = std::path::Path::new("/etc/gar");
         let s = target_installable(flake, Some("hyperv-debug")).unwrap();
-        assert!(s.contains("ragos-client-hyperv-debug"));
-        assert!(s.ends_with(".config.system.build.ragosPublishTree"));
+        assert!(s.contains("garos-client-hyperv-debug"));
+        assert!(s.ends_with(".config.system.build.garosPublishTree"));
     }
 
     #[test]
     fn test_target_installable_rescue_minimal() {
         let flake = std::path::Path::new("/etc/gar");
         let s = target_installable(flake, Some("rescue-minimal")).unwrap();
-        assert!(s.contains("ragos-client-rescue-minimal"));
+        assert!(s.contains("garos-client-rescue-minimal"));
     }
 
     #[test]
@@ -671,7 +674,7 @@ mod tests {
         // Passing a legacy alias should resolve to the canonical target.
         let flake = std::path::Path::new("/etc/gar");
         let s = target_installable(flake, Some("physical-generic")).unwrap();
-        assert!(s.contains("ragos-client-desktop-generic"));
+        assert!(s.contains("garos-client-desktop-generic"));
         assert!(!s.contains("physical-generic"));
     }
 

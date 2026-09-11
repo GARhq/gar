@@ -1,7 +1,7 @@
 # GAR CLI — Nix flake
 #
 # Exposes the pre-built `gar` binary as a flake output so the parent
-# RAGOS monorepo can consume it as a flake input:
+# GAROS monorepo can consume it as a flake input:
 #
 #   inputs.gar-cli.url = "github:GARhq/gar";
 #   inputs.gar-cli.flake = true;

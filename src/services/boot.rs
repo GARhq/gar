@@ -209,7 +209,7 @@ pub fn write_channel_ipxe(
 set build_id {build_id}
 isset ${{ip}} || dhcp
 echo Booting RAGOS {channel_str} (${{build_id}})...
-kernel http://{server_ip}:{http_port}/netboot/{boot_dir}/bzImage init={init_path} ip=dhcp ragos.primaryNicMac=${{net0/mac}} {kernel_params}
+kernel http://{server_ip}:{http_port}/netboot/{boot_dir}/bzImage init={init_path} ip=dhcp garos.primaryNicMac=${{net0/mac}} {kernel_params}
 initrd http://{server_ip}:{http_port}/netboot/{boot_dir}/initrd
 boot || goto failed
 
@@ -376,7 +376,7 @@ reboot
 set build_id {current_ver}
 isset ${{ip}} || dhcp
 echo Booting RAGOS current (${{build_id}})...
-kernel http://{server_ip}:{http_port}/netboot/current/bzImage init={current_init} ip=dhcp ragos.primaryNicMac=${{net0/mac}} {current_params}
+kernel http://{server_ip}:{http_port}/netboot/current/bzImage init={current_init} ip=dhcp garos.primaryNicMac=${{net0/mac}} {current_params}
 initrd http://{server_ip}:{http_port}/netboot/current/initrd
 boot || goto failed
 
@@ -400,7 +400,7 @@ shell
 set build_id {rescue_ver}
 isset ${{ip}} || dhcp
 echo Booting RAGOS rescue (${{build_id}})...
-kernel http://{server_ip}:{http_port}/netboot/rescue/bzImage init={rescue_init} ip=dhcp ragos.primaryNicMac=${{net0/mac}} {rescue_params}
+kernel http://{server_ip}:{http_port}/netboot/rescue/bzImage init={rescue_init} ip=dhcp garos.primaryNicMac=${{net0/mac}} {rescue_params}
 initrd http://{server_ip}:{http_port}/netboot/rescue/initrd
 boot || goto failed
 
@@ -781,6 +781,18 @@ mod tests {
         assert!(body.contains("init=/nix/store/init"));
         assert!(body.contains("quiet splash"));
         assert!(body.contains("shell"));
+        // K-130R-2 (2026-09-07): kernel cmdline must emit `garos.primaryNicMac=`,
+        // NOT `ragos.primaryNicMac=`. The client reads this token in
+        // garos/client/network/stage2-networkd.nix (case `garos.primaryNicMac=*`).
+        // Drift here = NIC pinning silently broken at boot.
+        assert!(
+            body.contains("garos.primaryNicMac="),
+            "kernel cmdline must use `garos.primaryNicMac=` (post-K-130R-2); got:\n{body}"
+        );
+        assert!(
+            !body.contains("ragos.primaryNicMac="),
+            "kernel cmdline must NOT contain legacy `ragos.primaryNicMac=`; got:\n{body}"
+        );
         cleanup(&dir);
     }
 
@@ -934,6 +946,45 @@ mod tests {
         let body = r#"{"id":"vOLD"}"#;
         let r = validate_boot_coherence(&dir, "v1", Some(body));
         assert!(matches!(r, Coherence::Diverged { .. }));
+        cleanup(&dir);
+    }
+
+    // === K-130R-2 behavioral demo ===
+    //
+    // Print the full generic.ipxe bundle when `cargo test ... --nocapture`
+    // is used. This gives the operator a way to **see** the kernel
+    // cmdline token (so we can prove `ragos.primaryNicMac=` is gone and
+    // `garos.primaryNicMac=` is present) without writing throwaway demo
+    // binaries that would pollute the crate.
+    #[test]
+    fn demo_k130r2_kernel_cmdline_shape() {
+        let dir = tmp("demo-ipxe");
+        let path = dir.join("generic.ipxe");
+        write_channel_ipxe(
+            &path,
+            Channel::Generic,
+            "v20260907-100000",
+            "/nix/store/abc-init",
+            "quiet splash",
+            "127.0.0.1",
+            8080,
+        )
+        .unwrap();
+        let body = fs::read_to_string(&path).unwrap();
+        eprintln!(
+            "\n[K-130R-2 demo] generic.ipxe produced by `gar` v{}:\n{}",
+            env!("CARGO_PKG_VERSION"),
+            body
+        );
+        eprintln!("[K-130R-2 demo] canonical kernel cmdline token: `garos.primaryNicMac=`");
+        eprintln!(
+            "[K-130R-2 demo] legacy banned kernel cmdline token `ragos.primaryNicMac=`: {}",
+            if body.contains("ragos.primaryNicMac=") {
+                "PRESENT (REGRESSION — K-130R-2 VIOLATED)"
+            } else {
+                "absent (correct)"
+            }
+        );
         cleanup(&dir);
     }
 

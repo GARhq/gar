@@ -1,5 +1,5 @@
-use std::io::Write;
 use assert_cmd::Command;
+use std::io::Write;
 use tempfile::NamedTempFile;
 
 fn get_garos_dir() -> std::path::PathBuf {
@@ -24,7 +24,12 @@ fn test_detect_duplicate_mac() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&["server", "check", "--inventory", file.path().to_str().unwrap()])
+        .args(&[
+            "server",
+            "check",
+            "--inventory",
+            file.path().to_str().unwrap(),
+        ])
         .assert()
         .failure()
         .stderr(predicates::str::contains("MAC duplicado"));
@@ -41,7 +46,12 @@ fn test_detect_duplicate_hostname() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&["server", "check", "--inventory", file.path().to_str().unwrap()])
+        .args(&[
+            "server",
+            "check",
+            "--inventory",
+            file.path().to_str().unwrap(),
+        ])
         .assert()
         .failure()
         .stderr(predicates::str::contains("hostname duplicado"));
@@ -58,7 +68,12 @@ fn test_detect_duplicate_ip() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&["server", "check", "--inventory", file.path().to_str().unwrap()])
+        .args(&[
+            "server",
+            "check",
+            "--inventory",
+            file.path().to_str().unwrap(),
+        ])
         .assert()
         .failure()
         .stderr(predicates::str::contains("IP duplicado"));
@@ -70,7 +85,12 @@ fn test_empty_inventory_forbidden_by_default() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&["server", "check", "--inventory", file.path().to_str().unwrap()])
+        .args(&[
+            "server",
+            "check",
+            "--inventory",
+            file.path().to_str().unwrap(),
+        ])
         .assert()
         .failure()
         .stderr(predicates::str::contains("inventario externo vazio"));
@@ -82,7 +102,13 @@ fn test_empty_inventory_allowed_explicitly() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&["server", "check", "--inventory", file.path().to_str().unwrap(), "--allow-empty"])
+        .args(&[
+            "server",
+            "check",
+            "--inventory",
+            file.path().to_str().unwrap(),
+            "--allow-empty",
+        ])
         .assert()
         .success();
 }
@@ -103,10 +129,17 @@ fn test_channel_release_track_mismatch() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&["server", "check", "--inventory", file.path().to_str().unwrap()])
+        .args(&[
+            "server",
+            "check",
+            "--inventory",
+            file.path().to_str().unwrap(),
+        ])
         .assert()
         .failure()
-        .stderr(predicates::str::contains("channel e releaseTrack incoerentes"));
+        .stderr(predicates::str::contains(
+            "channel e releaseTrack incoerentes",
+        ));
 }
 
 #[test]
@@ -125,10 +158,17 @@ fn test_profile_client_profile_mismatch() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&["server", "check", "--inventory", file.path().to_str().unwrap()])
+        .args(&[
+            "server",
+            "check",
+            "--inventory",
+            file.path().to_str().unwrap(),
+        ])
         .assert()
         .failure()
-        .stderr(predicates::str::contains("profile e clientProfile incoerentes"));
+        .stderr(predicates::str::contains(
+            "profile e clientProfile incoerentes",
+        ));
 }
 
 #[test]
@@ -148,7 +188,12 @@ fn test_semantic_combo_mismatch() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&["server", "check", "--inventory", file.path().to_str().unwrap()])
+        .args(&[
+            "server",
+            "check",
+            "--inventory",
+            file.path().to_str().unwrap(),
+        ])
         .assert()
         .failure()
         .stderr(predicates::str::contains("combinacao invalida"));
@@ -169,8 +214,15 @@ fn test_uefi_https_reserved() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&["server", "check", "--inventory", file.path().to_str().unwrap()])
+        .args(&[
+            "server",
+            "check",
+            "--inventory",
+            file.path().to_str().unwrap(),
+        ])
         .assert()
         .failure()
-        .stderr(predicates::str::contains("bootMethod=uefi-https ainda e reservado/futuro"));
+        .stderr(predicates::str::contains(
+            "bootMethod=uefi-https ainda e reservado/futuro",
+        ));
 }
