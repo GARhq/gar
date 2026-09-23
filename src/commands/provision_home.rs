@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command as SysCommand;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::Args;
 
@@ -71,22 +72,29 @@ fn create_btrfs_subvolume(path: &Path) -> Result<(), GarError> {
     }
 
     // Se o diretório já existe com dados, migrar atomicamente
-    let migrate_dir = if path.exists() {
-        let tmp = tempfile::tempdir_in(
-            path.parent().unwrap_or(Path::new("/tmp")),
-        )
-        .map_err(|e| GarError::Generic(format!("Falha ao criar dir temporário: {e}")))?;
+    // Use a numbered tmp dir alongside the target path instead of the tempfile crate
+    // (tempfile is only a dev-dependency).
+    let tmp_path: Option<PathBuf> = if path.exists() {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        let parent = path.parent().unwrap_or(Path::new("/"));
+        let tmp = parent.join(format!(".garos-migrate-{ts}"));
+        std::fs::create_dir_all(&tmp).map_err(|e| {
+            GarError::validation(format!("Falha ao criar dir temporário {}: {e}", tmp.display()))
+        })?;
 
         // Mover conteúdo para tmp
         let entries: Vec<_> = std::fs::read_dir(path)
-            .map_err(|e| GarError::Generic(format!("Falha ao ler {}: {e}", path.display())))?
+            .map_err(|e| GarError::validation(format!("Falha ao ler {}: {e}", path.display())))?
             .filter_map(|e| e.ok())
             .collect();
 
         for entry in &entries {
-            let dest = tmp.path().join(entry.file_name());
+            let dest = tmp.join(entry.file_name());
             std::fs::rename(entry.path(), &dest).map_err(|e| {
-                GarError::Generic(format!(
+                GarError::validation(format!(
                     "Falha ao mover {} -> {}: {e}",
                     entry.path().display(),
                     dest.display()
@@ -96,7 +104,7 @@ fn create_btrfs_subvolume(path: &Path) -> Result<(), GarError> {
 
         // Remover diretório vazio para criar subvolume
         std::fs::remove_dir(path).map_err(|e| {
-            GarError::Generic(format!("Falha ao remover dir vazio {}: {e}", path.display()))
+            GarError::validation(format!("Falha ao remover dir vazio {}: {e}", path.display()))
         })?;
 
         Some(tmp)
@@ -109,19 +117,19 @@ fn create_btrfs_subvolume(path: &Path) -> Result<(), GarError> {
         .args(["subvolume", "create"])
         .arg(path)
         .status()
-        .map_err(|e| GarError::Generic(format!("Falha ao executar btrfs subvolume create: {e}")))?;
+        .map_err(|e| GarError::validation(format!("Falha ao executar btrfs subvolume create: {e}")))?;
 
     if !status.success() {
-        return Err(GarError::Generic(format!(
+        return Err(GarError::validation(format!(
             "btrfs subvolume create falhou para {}",
             path.display()
         )));
     }
 
     // Restaurar dados migrados
-    if let Some(tmp) = migrate_dir {
-        let entries: Vec<_> = std::fs::read_dir(tmp.path())
-            .map_err(|e| GarError::Generic(format!("Falha ao ler dir tmp: {e}")))?
+    if let Some(tmp) = tmp_path {
+        let entries: Vec<_> = std::fs::read_dir(&tmp)
+            .map_err(|e| GarError::validation(format!("Falha ao ler dir tmp: {e}")))?
             .filter_map(|e| e.ok())
             .collect();
 
@@ -133,16 +141,18 @@ fn create_btrfs_subvolume(path: &Path) -> Result<(), GarError> {
                 .arg(entry.path())
                 .arg(&dest)
                 .status()
-                .map_err(|e| GarError::Generic(format!("Falha ao copiar de volta: {e}")))?;
+                .map_err(|e| GarError::validation(format!("Falha ao copiar de volta: {e}")))?;
 
             if !cp_status.success() {
-                return Err(GarError::Generic(format!(
+                return Err(GarError::validation(format!(
                     "Falha ao restaurar {} para {}",
                     entry.path().display(),
                     dest.display()
                 )));
             }
         }
+        // Remove o tmp dir após a restauração
+        let _ = std::fs::remove_dir_all(&tmp);
         eprintln!(
             "[GAROS:provision-home] Dados migrados para subvolume {}",
             path.display()
@@ -163,7 +173,7 @@ fn apply_btrfs_quota(path: &Path, quota_gb: u64) -> Result<(), GarError> {
         .args(["qgroup", "show", "-f"])
         .arg(path)
         .output()
-        .map_err(|e| GarError::Generic(format!("Falha ao consultar qgroup: {e}")))?;
+        .map_err(|e| GarError::validation(format!("Falha ao consultar qgroup: {e}")))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let qgroup = stdout
@@ -176,7 +186,7 @@ fn apply_btrfs_quota(path: &Path, quota_gb: u64) -> Result<(), GarError> {
         .args(["qgroup", "limit", &format!("{quota_gb}G"), qgroup])
         .arg(path)
         .status()
-        .map_err(|e| GarError::Generic(format!("Falha ao aplicar quota: {e}")))?;
+        .map_err(|e| GarError::validation(format!("Falha ao aplicar quota: {e}")))?;
 
     if !status.success() {
         eprintln!(
@@ -198,10 +208,10 @@ fn chown_home(user: &str, path: &Path) -> Result<(), GarError> {
         .arg(&format!("{user}:users"))
         .arg(path)
         .status()
-        .map_err(|e| GarError::Generic(format!("Falha ao chown: {e}")))?;
+        .map_err(|e| GarError::validation(format!("Falha ao chown: {e}")))?;
 
     if !status.success() {
-        return Err(GarError::Generic(format!(
+        return Err(GarError::validation(format!(
             "chown {user}:users {} falhou",
             path.display()
         )));
@@ -238,7 +248,7 @@ pub fn run(args: &ProvisionHomeArgs, json: bool) -> Result<(), GarError> {
         }
         StorageBackend::Plain | StorageBackend::Auto => {
             std::fs::create_dir_all(&args.home_path).map_err(|e| {
-                GarError::Generic(format!(
+                GarError::validation(format!(
                     "Falha ao criar diretório {}: {e}",
                     args.home_path.display()
                 ))
@@ -249,13 +259,13 @@ pub fn run(args: &ProvisionHomeArgs, json: bool) -> Result<(), GarError> {
     chown_home(&args.user, &args.home_path)?;
 
     if json {
-        output::print_json(&serde_json::json!({
+        output::json(&serde_json::json!({
             "status": "ok",
             "user": args.user,
             "home_path": args.home_path.display().to_string(),
             "backend": format!("{:?}", backend).to_lowercase(),
             "quota_gb": args.quota_gb,
-        }));
+        }))?;
     } else {
         eprintln!(
             "[GAROS:provision-home] ✓ Home de {} provisionada com sucesso",
@@ -271,15 +281,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_storage_backend_auto_detection_non_btrfs() {
-        // /tmp nunca é btrfs em ambientes de teste
-        assert!(!is_btrfs(Path::new("/tmp/test-home")));
+    fn test_storage_backend_auto_detection() {
+        // /proc é um pseudo-fs (procfs), nunca btrfs — seguro em qualquer ambiente.
+        assert!(!is_btrfs(Path::new("/proc")));
     }
 
     #[test]
     fn test_provision_plain_creates_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = tmp.path().join("testuser");
+        // Cria um dir temporário usando std::fs (sem depender do crate tempfile em runtime).
+        let tmp_base = std::env::temp_dir().join(format!(
+            "garos-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos()
+        ));
+        std::fs::create_dir_all(&tmp_base).expect("falha ao criar dir tmp");
+        let home = tmp_base.join("testuser");
 
         let args = ProvisionHomeArgs {
             user: "testuser".to_string(),
@@ -288,9 +306,11 @@ mod tests {
             backend: StorageBackend::Plain,
         };
 
-        // Este teste pode falhar se o usuário "testuser" não existir no sistema,
-        // mas a criação do diretório deve funcionar
+        // chown pode falhar se o usuário "testuser" não existir, mas create_dir_all deve funcionar.
         let _ = run(&args, false);
         assert!(home.exists());
+
+        let _ = std::fs::remove_dir_all(&tmp_base);
     }
 }
+

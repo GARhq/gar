@@ -159,6 +159,8 @@ mod tests {
 
     #[test]
     fn test_default_config_loads() {
+        // Ensure stale env vars from parallel tests don't contaminate this test.
+        std::env::remove_var("GAR_HTTP_PORT");
         let cfg = Config::from_env().expect("config should load with defaults");
         assert_eq!(cfg.target_host, "srv-gar");
         assert_eq!(cfg.http_port, 8080);

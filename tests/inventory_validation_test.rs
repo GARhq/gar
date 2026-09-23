@@ -4,7 +4,7 @@ use tempfile::NamedTempFile;
 
 fn get_garos_dir() -> std::path::PathBuf {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir.parent().unwrap().join("garos")
+    manifest_dir.parent().unwrap().join("GAROS")
 }
 
 fn create_temp_inventory(content: &str) -> NamedTempFile {
