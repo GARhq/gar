@@ -51,6 +51,10 @@ pub enum Command {
     /// Branding diagnostics (doctor)
     #[command(subcommand)]
     Branding(BrandingCmd),
+
+    /// Provision user home directory (BTRFS subvolume + quota or plain mkdir)
+    #[command(name = "provision-home")]
+    ProvisionHome(crate::commands::provision_home::ProvisionHomeArgs),
 }
 
 /// Image subcommands (era ragc).

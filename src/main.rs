@@ -40,6 +40,9 @@ async fn main() -> Result<()> {
         Command::Group(cmd) => commands::group::dispatch(cmd).await,
         Command::Client(cmd) => commands::client::dispatch(cmd).await,
         Command::Branding(cmd) => commands::branding::dispatch(cmd).await,
+        Command::ProvisionHome(ref args) => {
+            commands::provision_home::run(args, cli.json).map_err(|e| e.into())
+        }
     }
 }
 
