@@ -55,6 +55,10 @@ pub enum Command {
     /// Provision user home directory (BTRFS subvolume + quota or plain mkdir)
     #[command(name = "provision-home")]
     ProvisionHome(crate::commands::provision_home::ProvisionHomeArgs),
+
+    /// Manage encrypted secrets (SOPS/Age)
+    #[command(subcommand)]
+    Secrets(SecretsCmd),
 }
 
 /// Image subcommands (era ragc).
@@ -250,6 +254,29 @@ pub enum ClientCmd {
 pub enum BrandingCmd {
     /// Diagnose Plymouth/SDDM/Plasma branding
     Doctor(crate::commands::branding::DoctorFlags),
+}
+
+/// Secrets subcommands.
+#[derive(Debug, Subcommand)]
+pub enum SecretsCmd {
+    /// Encrypt a string using an Age public key
+    Encrypt {
+        /// The string to encrypt
+        value: String,
+
+        /// The age public key (e.g., age1...)
+        #[arg(long, short)]
+        pubkey: String,
+    },
+    /// Decrypt an Age encrypted string using a private key file
+    Decrypt {
+        /// The age encrypted string
+        value: String,
+
+        /// Path to the identity file (e.g., /etc/ssh/ssh_host_ed25519_key)
+        #[arg(long, short)]
+        identity: std::path::PathBuf,
+    },
 }
 
 /// Client target types (from ragc).
