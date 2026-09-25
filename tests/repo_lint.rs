@@ -111,10 +111,10 @@ fn test_no_banned_legacy_references_in_runtime_strings() {
 
     let banned_substrings = vec![
         // Kernel cmdline token — drifted back to `garos` in K-130R-2.
-        "garos.primaryNicMac=",
+        "ragos.primaryNicMac=",
         // Nix installable attribute — K-130R-1.
-        "nixosConfigurations.garos-client-",
-        "system.build.garosPublishTree",
+        "nixosConfigurations.ragos-client-",
+        "system.build.ragosPublishTree",
     ];
 
     let src_dir = root.join("src");
@@ -310,7 +310,7 @@ fn test_flake_nix_consistency() {
          confuse downstream readers"
     );
     assert!(
-        !flake.contains("GAROS monorepo"),
-        "flake.nix must not reference the legacy `GAROS monorepo` — drift"
+        !flake.contains("RAGOS monorepo"),
+        "flake.nix must not reference the legacy `RAGOS monorepo` — drift"
     );
 }

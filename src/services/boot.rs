@@ -782,7 +782,7 @@ mod tests {
         assert!(body.contains("quiet splash"));
         assert!(body.contains("shell"));
         // K-130R-2 (2026-09-07): kernel cmdline must emit `garos.primaryNicMac=`,
-        // NOT `garos.primaryNicMac=`. The client reads this token in
+        // NOT `ragos.primaryNicMac=`. The client reads this token in
         // garos/client/network/stage2-networkd.nix (case `garos.primaryNicMac=*`).
         // Drift here = NIC pinning silently broken at boot.
         assert!(
@@ -790,8 +790,8 @@ mod tests {
             "kernel cmdline must use `garos.primaryNicMac=` (post-K-130R-2); got:\n{body}"
         );
         assert!(
-            !body.contains("garos.primaryNicMac="),
-            "kernel cmdline must NOT contain legacy `garos.primaryNicMac=`; got:\n{body}"
+            !body.contains("ragos.primaryNicMac="),
+            "kernel cmdline must NOT contain legacy `ragos.primaryNicMac=`; got:\n{body}"
         );
         cleanup(&dir);
     }
@@ -978,8 +978,8 @@ mod tests {
         );
         eprintln!("[K-130R-2 demo] canonical kernel cmdline token: `garos.primaryNicMac=`");
         eprintln!(
-            "[K-130R-2 demo] legacy banned kernel cmdline token `garos.primaryNicMac=`: {}",
-            if body.contains("garos.primaryNicMac=") {
+            "[K-130R-2 demo] legacy banned kernel cmdline token `ragos.primaryNicMac=`: {}",
+            if body.contains("ragos.primaryNicMac=") {
                 "PRESENT (REGRESSION — K-130R-2 VIOLATED)"
             } else {
                 "absent (correct)"
