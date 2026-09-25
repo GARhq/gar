@@ -1,13 +1,8 @@
-//! `gar user` subcommand. Replaces `garos user` from server/garos-cli.nix.
-
-use std::os::unix::fs::MetadataExt;
-use std::path::Path;
-
 use chrono::Utc;
 use owo_colors::OwoColorize;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use std::path::Path;
 
-use crate::cli::UserCmd;
 use crate::config::Config;
 use crate::error::{GarError, Result};
 use crate::output;
@@ -28,37 +23,6 @@ const DEFAULT_USER_SUBDIRS: &[&str] = &[
     "Videos",
 ];
 
-pub async fn dispatch(cmd: UserCmd) -> Result<()> {
-    match cmd {
-        UserCmd::Add {
-            username,
-            quota,
-            password,
-            password_hash,
-            group,
-        } => {
-            cmd_add(
-                &username,
-                quota.as_deref(),
-                password.as_deref(),
-                password_hash.as_deref(),
-                group.as_deref(),
-            )
-            .await
-        }
-        UserCmd::Resize {
-            username,
-            quota,
-            force,
-        } => cmd_resize(&username, &quota, force).await,
-        UserCmd::List => cmd_list().await,
-        UserCmd::Delete { username, archive } => cmd_delete(&username, archive).await,
-        UserCmd::Doctor { username } => cmd_doctor(&username).await,
-        UserCmd::QuotaSync => cmd_quota_sync().await,
-        UserCmd::Activity { username } => cmd_activity(&username).await,
-    }
-}
-
 #[derive(Debug, Serialize)]
 pub struct AddResult {
     pub username: String,
@@ -66,6 +30,23 @@ pub struct AddResult {
     pub quota: String,
     pub group: String,
     pub catalog_updated: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeleteResult {
+    pub username: String,
+    pub archive: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserRow {
+    pub username: String,
+    pub usage: String,
+    pub usage_bytes: u64,
+    pub quota: String,
+    pub quota_bytes: u64,
+    pub percent: String,
+    pub home: String,
 }
 
 pub async fn cmd_add(
@@ -154,82 +135,6 @@ pub async fn cmd_add(
         );
     }
     Ok(())
-}
-
-pub async fn cmd_resize(username: &str, quota: &str, force: bool) -> Result<()> {
-    let cfg = Config::from_env()?;
-    let home = cfg.home_base.join(username);
-    if !home.exists() {
-        return Err(GarError::user(format!(
-            "home ausente para {}: {}",
-            username,
-            home.display()
-        )));
-    }
-    let quota_b = human_to_bytes_check(quota)?;
-    let usage_b = user_system::dir_size_bytes(&home);
-    let current = user_system::read_meta_value(&home, "QUOTA").unwrap_or_default();
-
-    if usage_b > quota_b && !force {
-        return Err(GarError::user(format!(
-            "nova quota {} e menor que o uso atual {}; use --force se quiser prosseguir",
-            quota,
-            user_system::bytes_to_human(usage_b)
-        )));
-    }
-
-    let ops = FsOps::for_path(&cfg.home_base)?;
-    ops.enable_quotas(&cfg.home_base).await?;
-    ops.set_quota(&home, quota).await?;
-
-    HomeMeta::write(
-        &home,
-        &HomeMeta {
-            user: username.into(),
-            home: home.display().to_string(),
-            quota: quota.into(),
-            updated_at: Utc::now().to_rfc3339(),
-        },
-    )?;
-
-    if cfg.json_output {
-        output::json(&ResizeResult {
-            username: username.into(),
-            home: home.display().to_string(),
-            old_quota: current,
-            new_quota: quota.into(),
-            usage_bytes: usage_b,
-        })?;
-    } else {
-        output::ok(format!("usuário redimensionado: {}", username));
-        println!("  uso atual:     {}", user_system::bytes_to_human(usage_b));
-        println!(
-            "  quota anterior: {}",
-            if current.is_empty() { "—" } else { &current }
-        );
-        println!("  nova quota:    {}", quota);
-    }
-    Ok(())
-}
-
-#[derive(Debug, Serialize)]
-struct ResizeResult {
-    username: String,
-    home: String,
-    old_quota: String,
-    new_quota: String,
-    usage_bytes: u64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct UserRow {
-    pub username: String,
-    pub usage: String,
-    pub usage_bytes: u64,
-    pub quota: String,
-    pub quota_bytes: u64,
-    pub percent: String,
-    pub home: String,
 }
 
 pub async fn cmd_list() -> Result<()> {
@@ -370,167 +275,6 @@ pub async fn cmd_delete(username: &str, archive: bool) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Serialize)]
-struct DeleteResult {
-    username: String,
-    archive: String,
-}
-
-pub async fn cmd_doctor(username: &str) -> Result<()> {
-    if username.is_empty() {
-        return Err(GarError::invalid_argument("uso: gar user doctor <nome>"));
-    }
-    let cfg = Config::from_env()?;
-    let home = cfg.home_base.join(username);
-    if !home.exists() {
-        return Err(GarError::user(format!(
-            "home ausente para {}: {}",
-            username,
-            home.display()
-        )));
-    }
-
-    let usage_b = user_system::dir_size_bytes(&home);
-    let quota = user_system::read_meta_value(&home, "QUOTA").unwrap_or_default();
-    let catalog_path = cfg.runtime_root.join("client-users.json");
-    let catalog_status = match ClientUsersCatalog::load(&catalog_path).ok() {
-        Some(c) if c.get(username).is_some() => "presente",
-        _ => "ausente",
-    };
-    let (owner, mode) = owner_mode(&home);
-    let fstype = user_system::fs_type(&home).unwrap_or_else(|| "desconhecido".into());
-    let mount = user_system::mount_info(&home).unwrap_or_else(|| "(indisponivel)".into());
-    let qgroup = user_system::qgroup_info(&home).unwrap_or_else(|| "(indisponivel)".into());
-
-    if cfg.json_output {
-        output::json(&DoctorReport {
-            username: username.into(),
-            home: home.display().to_string(),
-            filesystem: fstype,
-            owner,
-            mode,
-            usage_bytes: usage_b,
-            quota,
-            catalog: catalog_status.into(),
-            mount,
-            qgroup,
-        })?;
-    } else {
-        println!("  usuario:     {}", username);
-        println!("  home:        {}", home.display());
-        println!("  filesystem:  {}", fstype);
-        println!("  owner:       {}", owner);
-        println!("  modo:        {}", mode);
-        println!("  uso:         {}", user_system::bytes_to_human(usage_b));
-        println!(
-            "  quota:       {}",
-            if quota.is_empty() { "—" } else { &quota }
-        );
-        println!("  catalog_cliente: {}", catalog_status);
-        println!("  montagem:");
-        for line in mount.lines() {
-            println!("    {}", line);
-        }
-        println!("  qgroup:");
-        for line in qgroup.lines() {
-            println!("    {}", line);
-        }
-    }
-    Ok(())
-}
-
-#[derive(Debug, Serialize)]
-struct DoctorReport {
-    username: String,
-    home: String,
-    filesystem: String,
-    owner: String,
-    mode: String,
-    usage_bytes: u64,
-    quota: String,
-    catalog: String,
-    mount: String,
-    qgroup: String,
-}
-
-pub async fn cmd_quota_sync() -> Result<()> {
-    let cfg = Config::from_env()?;
-    if !cfg.home_base.exists() {
-        output::warn("storage de homes ausente");
-        return Ok(());
-    }
-    if !user_system::is_mountpoint(&cfg.home_base) {
-        return Err(GarError::user("home nao esta montada"));
-    }
-    let ops = FsOps::for_path(&cfg.home_base)?;
-    ops.enable_quotas(&cfg.home_base).await?;
-
-    let mut synced = 0;
-    let mut skipped = 0;
-    for entry in std::fs::read_dir(&cfg.home_base)? {
-        let Ok(entry) = entry else { continue };
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if name.starts_with('.') {
-            continue;
-        }
-        let Some(quota) = user_system::read_meta_value(&path, "QUOTA").filter(|q| !q.is_empty())
-        else {
-            skipped += 1;
-            continue;
-        };
-        match ops.set_quota(&path, &quota).await {
-            Ok(()) => synced += 1,
-            Err(e) => output::warn(format!("falha ao sincronizar {}: {}", name, e)),
-        }
-    }
-    output::ok(format!(
-        "quotas sincronizadas ({} sincronizadas, {} sem metadata)",
-        synced, skipped
-    ));
-    Ok(())
-}
-
-pub async fn cmd_activity(username: &str) -> Result<()> {
-    let cfg = Config::from_env()?;
-    let audit_file = cfg.audit_dir.join("login-history.json");
-    if !audit_file.exists() {
-        println!("sem registro de auditoria para {}", username);
-        return Ok(());
-    }
-    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(&audit_file)?)?;
-    let sessions: Vec<Session> = json
-        .get("sessions")
-        .and_then(|s| s.get(username))
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
-
-    if cfg.json_output {
-        return output::json(&sessions);
-    }
-    if sessions.is_empty() {
-        println!("sem sessões registradas para {}", username);
-        return Ok(());
-    }
-    for s in &sessions {
-        println!("[{}] [{}] tty={} ip={}", s.timestamp, s.action, s.tty, s.ip);
-    }
-    Ok(())
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Session {
-    timestamp: String,
-    action: String,
-    tty: String,
-    ip: String,
-}
-
 fn validate_username(s: &str) -> Result<()> {
     if s.is_empty() {
         return Err(GarError::invalid_argument(
@@ -571,34 +315,8 @@ fn is_builtin_group(name: &str) -> bool {
     )
 }
 
-fn human_to_bytes_check(human: &str) -> Result<u64> {
+pub(crate) fn human_to_bytes_check(human: &str) -> Result<u64> {
     user_system::human_to_bytes(human)
-}
-
-fn owner_mode(path: &Path) -> (String, String) {
-    let Ok(m) = std::fs::metadata(path) else {
-        return ("?".into(), "?".into());
-    };
-    let owner = name_from_getent("passwd", m.uid()).unwrap_or_else(|| m.uid().to_string());
-    let group = name_from_getent("group", m.gid()).unwrap_or_else(|| m.gid().to_string());
-    (
-        format!("{}:{}", owner, group),
-        format!("{:o}", m.mode() & 0o7777),
-    )
-}
-
-fn name_from_getent(kind: &str, id: u32) -> Option<String> {
-    let output = std::process::Command::new("getent")
-        .args([kind, &id.to_string()])
-        .output()
-        .ok()?;
-    output.status.success().then(|| {
-        String::from_utf8_lossy(&output.stdout)
-            .split(':')
-            .next()
-            .unwrap_or("")
-            .to_string()
-    })
 }
 
 fn upsert_user_catalog(cfg: &Config, username: &str, hash: &str) -> Result<()> {

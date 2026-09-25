@@ -1,8 +1,21 @@
 use crate::cli::SecretsCmd;
 use crate::error::{GarError, Result};
+use crate::output;
+use crate::config::Config;
 use std::io::{Read, Write};
 use std::str::FromStr;
 use age::x25519::{Identity, Recipient};
+use serde::Serialize;
+
+#[derive(Debug, Serialize)]
+pub struct EncryptResult {
+    pub encrypted_hex: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DecryptResult {
+    pub decrypted: String,
+}
 
 pub async fn dispatch(cmd: SecretsCmd) -> Result<()> {
     match cmd {
@@ -39,7 +52,15 @@ fn encrypt(value: &str, pubkey: &str) -> Result<()> {
     // Let's just output base64 encoded. Wait, `gar-cli` might not have `base64`.
     // Let's print it as hex using standard library.
     let hex: String = encrypted.iter().map(|b| format!("{:02x}", b)).collect();
-    println!("{}", hex);
+    let cfg = Config::from_env().unwrap_or_default();
+    if cfg.json_output {
+        output::json(&EncryptResult {
+            encrypted_hex: hex.clone(),
+        })?;
+    } else {
+        output::ok("Valor criptografado:");
+        println!("  {}", hex);
+    }
     Ok(())
 }
 
@@ -72,6 +93,14 @@ fn decrypt(value: &str, identity_path: &std::path::Path) -> Result<()> {
         GarError::config(format!("Failed to read decrypted string: {}", e))
     })?;
 
-    println!("{}", decrypted);
+    let cfg = Config::from_env().unwrap_or_default();
+    if cfg.json_output {
+        output::json(&DecryptResult {
+            decrypted: decrypted.clone(),
+        })?;
+    } else {
+        output::ok("Valor decriptografado:");
+        println!("  {}", decrypted);
+    }
     Ok(())
 }
