@@ -1,6 +1,6 @@
 //! `gar server` subcommand — manages NixOS server (srv-gar).
 //!
-//! Replaces `ragos` top-level commands (server/ragos-cli.nix lines 494-567).
+//! Replaces `garos` top-level commands (server/garos-cli.nix lines 494-567).
 //! Commands: sync, switch, test, rollback, update, clean, check, repl, path, enter, status.
 
 pub mod info;

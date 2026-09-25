@@ -1,6 +1,6 @@
 //! Nix generation management (current generation + GC).
 //!
-//! Replaces `current_generation` + `clean_without_nh` from ragos-cli.nix.
+//! Replaces `current_generation` + `clean_without_nh` from garos-cli.nix.
 
 use std::process::Command;
 

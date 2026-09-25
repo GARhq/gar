@@ -208,7 +208,7 @@ pub fn write_channel_ipxe(
 
 set build_id {build_id}
 isset ${{ip}} || dhcp
-echo Booting RAGOS {channel_str} (${{build_id}})...
+echo Booting GAROS {channel_str} (${{build_id}})...
 kernel http://{server_ip}:{http_port}/netboot/{boot_dir}/bzImage init={init_path} ip=dhcp garos.primaryNicMac=${{net0/mac}} {kernel_params}
 initrd http://{server_ip}:{http_port}/netboot/{boot_dir}/initrd
 boot || goto failed
@@ -312,7 +312,7 @@ isset ${{ip}} || dhcp
 isset ${{net0/mac}} || goto menu
 chain --replace http://{server_ip}:{http_port}/by-mac/${{net0/mac}}.ipxe || goto menu
 :menu
-menu RAGOS Boot
+menu GAROS Boot
 item --gap -- =====================================
 item generic Boot generic (${{generic_build_id}})
 item lab Boot lab (${{lab_build_id}})
@@ -375,7 +375,7 @@ reboot
 
 set build_id {current_ver}
 isset ${{ip}} || dhcp
-echo Booting RAGOS current (${{build_id}})...
+echo Booting GAROS current (${{build_id}})...
 kernel http://{server_ip}:{http_port}/netboot/current/bzImage init={current_init} ip=dhcp garos.primaryNicMac=${{net0/mac}} {current_params}
 initrd http://{server_ip}:{http_port}/netboot/current/initrd
 boot || goto failed
@@ -399,7 +399,7 @@ shell
 
 set build_id {rescue_ver}
 isset ${{ip}} || dhcp
-echo Booting RAGOS rescue (${{build_id}})...
+echo Booting GAROS rescue (${{build_id}})...
 kernel http://{server_ip}:{http_port}/netboot/rescue/bzImage init={rescue_init} ip=dhcp garos.primaryNicMac=${{net0/mac}} {rescue_params}
 initrd http://{server_ip}:{http_port}/netboot/rescue/initrd
 boot || goto failed
@@ -782,7 +782,7 @@ mod tests {
         assert!(body.contains("quiet splash"));
         assert!(body.contains("shell"));
         // K-130R-2 (2026-09-07): kernel cmdline must emit `garos.primaryNicMac=`,
-        // NOT `ragos.primaryNicMac=`. The client reads this token in
+        // NOT `garos.primaryNicMac=`. The client reads this token in
         // garos/client/network/stage2-networkd.nix (case `garos.primaryNicMac=*`).
         // Drift here = NIC pinning silently broken at boot.
         assert!(
@@ -790,8 +790,8 @@ mod tests {
             "kernel cmdline must use `garos.primaryNicMac=` (post-K-130R-2); got:\n{body}"
         );
         assert!(
-            !body.contains("ragos.primaryNicMac="),
-            "kernel cmdline must NOT contain legacy `ragos.primaryNicMac=`; got:\n{body}"
+            !body.contains("garos.primaryNicMac="),
+            "kernel cmdline must NOT contain legacy `garos.primaryNicMac=`; got:\n{body}"
         );
         cleanup(&dir);
     }
@@ -953,7 +953,7 @@ mod tests {
     //
     // Print the full generic.ipxe bundle when `cargo test ... --nocapture`
     // is used. This gives the operator a way to **see** the kernel
-    // cmdline token (so we can prove `ragos.primaryNicMac=` is gone and
+    // cmdline token (so we can prove `garos.primaryNicMac=` is gone and
     // `garos.primaryNicMac=` is present) without writing throwaway demo
     // binaries that would pollute the crate.
     #[test]
@@ -978,8 +978,8 @@ mod tests {
         );
         eprintln!("[K-130R-2 demo] canonical kernel cmdline token: `garos.primaryNicMac=`");
         eprintln!(
-            "[K-130R-2 demo] legacy banned kernel cmdline token `ragos.primaryNicMac=`: {}",
-            if body.contains("ragos.primaryNicMac=") {
+            "[K-130R-2 demo] legacy banned kernel cmdline token `garos.primaryNicMac=`: {}",
+            if body.contains("garos.primaryNicMac=") {
                 "PRESENT (REGRESSION — K-130R-2 VIOLATED)"
             } else {
                 "absent (correct)"

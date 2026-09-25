@@ -37,7 +37,7 @@ pub async fn cmd_add(
     if group_system::is_permanent(name) && group_system::group_exists(name) {
         return report_existing(name, &cfg);
     }
-    let description = description.unwrap_or("RAGOS Group");
+    let description = description.unwrap_or("GAROS Group");
     let quota_str = storage_quota.unwrap_or("100G");
     let quota = QuotaSpec::new(quota_str)?;
     let sector = group_system::sector_path(&cfg.storage_base, name);
@@ -112,7 +112,7 @@ fn report_existing(name: &str, cfg: &Config) -> Result<()> {
                 e.gid,
             ),
             None => (
-                "RAGOS Group".into(),
+                "GAROS Group".into(),
                 group_system::sector_path(&cfg.storage_base, name)
                     .display()
                     .to_string(),

@@ -1,7 +1,7 @@
 //! Generation metadata for IMAGE generations (bootable diskless images).
 //!
 //! Read sidecar files written by `gar image build` (stage_generation) and
-//! runtime params from `/var/lib/ragos/runtime/params.nix`.
+//! runtime params from `/var/lib/garos/runtime/params.nix`.
 //!
 //! Replaces `publish.sh:104-114` (`runtime_source_from_params_file`),
 //! `publish.sh:233-243` (`read_generation_init_path`,

@@ -103,7 +103,7 @@ pub enum ImageCmd {
     Doctor,
 }
 
-/// Server subcommands (era ragos top-level).
+/// Server subcommands (era garos top-level).
 #[derive(Debug, Subcommand)]
 pub enum ServerCmd {
     /// Sync operational checkout via Git
@@ -139,7 +139,7 @@ pub enum ServerCmd {
     Status,
 }
 
-/// User subcommands (era ragos user).
+/// User subcommands (era garos user).
 #[derive(Debug, Subcommand)]
 pub enum UserCmd {
     Add {
@@ -176,7 +176,7 @@ pub enum UserCmd {
     },
 }
 
-/// Group subcommands (era ragos group).
+/// Group subcommands (era garos group).
 #[derive(Debug, Subcommand)]
 pub enum GroupCmd {
     Add {

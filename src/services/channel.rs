@@ -265,7 +265,7 @@ pub fn resolve_client_target(
 /// **Notes:**
 /// - References `nixosConfigurations.garos-client-*` (canonical post-rebrand
 ///   since `garos/flake.nix` publish block; K-130R-1, 2026-09-07).
-///   `nixosConfigurations.ragos-client-*` no longer exists.
+///   `nixosConfigurations.garos-client-*` no longer exists.
 /// - The build attribute is `system.build.garosPublishTree` (not
 ///   `garPublishTree` / `garosPublishTree`) — see also `garos/client/profiles/*`.
 /// - If `flake_root` already contains a `:` (i.e. a Nix scheme like

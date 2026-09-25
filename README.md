@@ -11,7 +11,7 @@
 
 ## 📌 Visão Geral
 
-O `gar` é a interface de administração unificada do ecossistema GAROS escrita em Rust. Ele substituiu com sucesso as ferramentas legadas em bash (`ragc` e `ragos`), consolidando toda a gestão operacional sob uma única CLI compilada e extremamente rápida, com suporte a saída estruturada (JSON / Tabelas), validações determinísticas e tratamento seguro de erros via `anyhow` e `thiserror`.
+O `gar` é a interface de administração unificada do ecossistema GAROS escrita em Rust. Ele substituiu com sucesso as ferramentas legadas em bash (`ragc` e `garos`), consolidando toda a gestão operacional sob uma única CLI compilada e extremamente rápida, com suporte a saída estruturada (JSON / Tabelas), validações determinísticas e tratamento seguro de erros via `anyhow` e `thiserror`.
 
 ### Principais Capacidades
 - 🖥️ **`gar server`**: Administração do host NixOS (`srv-garos`), executando `switch`, `test`, `rollback`, `update`, `clean` e diagnósticos de saúde.
@@ -30,7 +30,7 @@ gar/
 ├── Cargo.lock               # Árvore determinística de dependências Rust
 ├── default.nix              # Expressão de build declarativo Nix para a CLI
 ├── flake.nix                # Input Flake exportando o pacote `gar`
-├── MIGRATION.md             # Documento de transição histórica ragos/ragc -> gar
+├── MIGRATION.md             # Documento de transição histórica garos/ragc -> gar
 ├── src/
 │   ├── main.rs              # Ponto de entrada CLI e parser de argumentos
 │   ├── cli.rs               # Definição das estruturas Clap (Commands, Subcommands & Flags)
@@ -133,10 +133,10 @@ nix flake check
 
 ---
 
-## 🔄 Migração e Histórico (ragos / ragc → gar)
+## 🔄 Migração e Histórico (garos / ragc → gar)
 
 O `gar` consolida todas as funções operacionais anteriores:
-- **`ragos`** → Migrado para `gar server` e `gar image`.
+- **`garos`** → Migrado para `gar server` e `gar image`.
 - **`ragc`** → Migrado para `gar user`, `gar group` e `gar inventory`.
 
 Para mais detalhes sobre a especificação técnica de migração, consulte o arquivo [`MIGRATION.md`](./MIGRATION.md).

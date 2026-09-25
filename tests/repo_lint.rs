@@ -72,7 +72,7 @@ fn list_files_in_dir(base: &Path, max_depth: Option<usize>, recursive: bool) -> 
 fn test_root_markdown_allowlist() {
     // `gar/` is a Rust crate, not a docs monorepo. The only top-level
     // markdown that should exist here is `README.md` (Cargo's `readme`
-    // field) and `MIGRATION.md` (the ragos→gar migration record) —
+    // field) and `MIGRATION.md` (the garos→gar migration record) —
     // everything else belongs in `docs/` or is an intentional file we
     // list explicitly below.
     let root = repo_root();
@@ -97,7 +97,7 @@ fn test_root_markdown_allowlist() {
 #[test]
 fn test_no_banned_legacy_references_in_runtime_strings() {
     // Drift guards: NOTHING in this crate should reference the legacy
-    // `ragos`/`ragc` vocabulary in PRODUCTION runtime strings — Nix
+    // `garos`/`ragc` vocabulary in PRODUCTION runtime strings — Nix
     // installable refs, kernel cmdline tokens, env-var names, format
     // strings, and JSON field names. Historical mentions in docstrings
     // and migration notes (MIGRATION.md, comments referencing the past)
@@ -111,10 +111,10 @@ fn test_no_banned_legacy_references_in_runtime_strings() {
 
     let banned_substrings = vec![
         // Kernel cmdline token — drifted back to `garos` in K-130R-2.
-        "ragos.primaryNicMac=",
+        "garos.primaryNicMac=",
         // Nix installable attribute — K-130R-1.
-        "nixosConfigurations.ragos-client-",
-        "system.build.ragosPublishTree",
+        "nixosConfigurations.garos-client-",
+        "system.build.garosPublishTree",
     ];
 
     let src_dir = root.join("src");
@@ -133,7 +133,7 @@ fn test_no_banned_legacy_references_in_runtime_strings() {
             if stripped.contains(needle) {
                 panic!(
                     "src/{:?} contains banned legacy reference `{}` in runtime code — \
-                     K-130R requires `ragos`/`ragc` be replaced by \
+                     K-130R requires `garos`/`ragc` be replaced by \
                      `gar`/`garos` in production code paths",
                     file.file_name().unwrap(),
                     needle
@@ -147,7 +147,7 @@ fn test_no_banned_legacy_references_in_runtime_strings() {
 ///
 /// Crude but sufficient for lint purposes — we don't need full token
 /// awareness, only to neutralize self-referential diagnostics and
-/// historical "this used to be ragos" comments.
+/// historical "this used to be garos" comments.
 fn strip_rust_comments(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
     let bytes = src.as_bytes();
@@ -294,7 +294,7 @@ fn test_cargo_manifest_consistency() {
 #[test]
 fn test_flake_nix_consistency() {
     // flake.nix sanity: must expose `packages.default`, must NOT
-    // reference the legacy ragos monorepo by name in its OWN header
+    // reference the legacy garos monorepo by name in its OWN header
     // comment.
     let flake = fs::read_to_string(repo_root().join("flake.nix")).expect("read flake.nix");
 
@@ -305,12 +305,12 @@ fn test_flake_nix_consistency() {
     );
     assert!(
         flake.contains("GAR CLI"),
-        "flake.nix description must say `GAR CLI` (not RAGOS) — the README \
+        "flake.nix description must say `GAR CLI` (not GAROS) — the README \
          and K-128B cross-repo map already say `GAR`; drift here would \
          confuse downstream readers"
     );
     assert!(
-        !flake.contains("RAGOS monorepo"),
-        "flake.nix must not reference the legacy `RAGOS monorepo` — drift"
+        !flake.contains("GAROS monorepo"),
+        "flake.nix must not reference the legacy `GAROS monorepo` — drift"
     );
 }

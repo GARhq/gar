@@ -227,7 +227,7 @@ pub fn build_meta(name: &str, description: &str, gid: u32, quota: &QuotaSpec) ->
     }
 }
 
-/// Write `.group-meta` (key=value legacy format compatible with bash ragos).
+/// Write `.group-meta` (key=value legacy format compatible with bash garos).
 pub fn write_meta(sector: &Path, meta: &GroupMeta) -> Result<()> {
     std::fs::create_dir_all(sector)?;
     let content = format!(

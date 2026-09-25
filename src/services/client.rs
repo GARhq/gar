@@ -9,7 +9,7 @@
 //! `gar client wake` subcommands. These functions are the contract surface
 //! for the `garos-control-web` Adapter (corporate panel).
 //!
-//! Inspired by `cmd_client_session_doctor` in `server/ragos-cli.nix`
+//! Inspired by `cmd_client_session_doctor` in `server/garos-cli.nix`
 //! (11 lines of bash). All operations are best-effort: missing files
 //! produce empty sections rather than errors, so the doctor can run
 //! in CI sandboxes without runtime dependencies.

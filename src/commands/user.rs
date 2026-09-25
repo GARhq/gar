@@ -1,4 +1,4 @@
-//! `gar user` subcommand. Replaces `ragos user` from server/ragos-cli.nix.
+//! `gar user` subcommand. Replaces `garos user` from server/garos-cli.nix.
 
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;

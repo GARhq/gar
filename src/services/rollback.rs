@@ -22,10 +22,10 @@ use serde::{Deserialize, Serialize};
 use crate::error::{GarError, Result};
 
 /// Default path for the "rollback in progress" marker.
-pub const DEFAULT_PENDING_PATH: &str = "/var/lib/ragos/state/rollback.pending";
+pub const DEFAULT_PENDING_PATH: &str = "/var/lib/garos/state/rollback.pending";
 
 /// Default path for the "last applied rollback" record.
-pub const DEFAULT_LAST_PATH: &str = "/var/lib/ragos/state/rollback.last";
+pub const DEFAULT_LAST_PATH: &str = "/var/lib/garos/state/rollback.last";
 
 /// A parsed rollback record. Mirrors the bash `source`-able `KEY=VALUE` file.
 ///

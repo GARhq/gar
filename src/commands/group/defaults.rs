@@ -13,7 +13,7 @@ pub struct GroupEnsureDefaultsResult {
 pub async fn cmd_ensure_defaults() -> Result<()> {
     let cfg = Config::from_env()?;
     let defaults: &[(&str, &str, &str)] = &[
-        ("admin", "RAGOS administrators", "10G"),
+        ("admin", "GAROS administrators", "10G"),
         ("users", "Default user sector", "1T"),
         ("lab", "Laboratory sector", "500G"),
     ];

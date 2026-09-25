@@ -1,6 +1,6 @@
 //! Runtime guard for GAR server commands.
 //!
-//! Replaces `validate_runtime_guard` from ragos-cli.nix.
+//! Replaces `validate_runtime_guard` from garos-cli.nix.
 //! Verifies that the operational checkout exists, has required runtime
 //! files, and `/boot` resolves to a real device.
 

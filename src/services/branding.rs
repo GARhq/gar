@@ -4,7 +4,7 @@
 //! the Nix store (`/run/current-system/sw/share/...`). Used by
 //! `gar branding doctor` to validate the branding layer of GAROS.
 //!
-//! Inspired by `cmd_branding_doctor` in `server/ragos-cli.nix` (12 lines of bash).
+//! Inspired by `cmd_branding_doctor` in `server/garos-cli.nix` (12 lines of bash).
 
 use std::path::{Path, PathBuf};
 
@@ -222,7 +222,7 @@ fn attach_sha256_to_surface(surfaces: &mut Vec<SurfaceEntry>, path: &str, hash: 
 ///
 /// Search order:
 /// 1. `GAR_BRANDING_BASELINE` env var (explicit override)
-/// 2. `/etc/ragos/branding/baseline-manifest.txt` (runtime config)
+/// 2. `/etc/garos/branding/baseline-manifest.txt` (runtime config)
 /// 3. `/run/current-system/sw/share/gar/branding/baseline-manifest.txt` (Nix store)
 /// 4. `$CARGO_MANIFEST_DIR/branding/baseline-manifest.txt` (dev workspace)
 ///
@@ -235,7 +235,7 @@ pub fn resolve_baseline_path() -> Result<Option<PathBuf>> {
         std::env::var("GAR_BRANDING_BASELINE")
             .ok()
             .map(PathBuf::from),
-        Some(PathBuf::from("/etc/ragos/branding/baseline-manifest.txt")),
+        Some(PathBuf::from("/etc/garos/branding/baseline-manifest.txt")),
         Some(PathBuf::from(
             "/run/current-system/sw/share/gar/branding/baseline-manifest.txt",
         )),
@@ -448,29 +448,29 @@ pub fn plymouth_theme() -> BrandingCheck {
     }
 }
 
-/// Plasma look-and-feel packages matching `ragos|org.ragos`.
+/// Plasma look-and-feel packages matching `garos|org.garos`.
 pub fn plasma_look_and_feel() -> BrandingCheck {
     let base = format!("{}/share/plasma/look-and-feel", NIX_SW);
     BrandingCheck {
         label: "plasma_look_and_feel".into(),
         path: base.clone(),
         found: Path::new(&base).exists(),
-        matches: list_dirs(&base, 20, Some(&["ragos", "org.kde"])),
+        matches: list_dirs(&base, 20, Some(&["garos", "org.kde"])),
     }
 }
 
-/// Plasma desktoptheme packages matching `ragos|org.ragos`.
+/// Plasma desktoptheme packages matching `garos|org.garos`.
 pub fn plasma_desktoptheme() -> BrandingCheck {
     let base = format!("{}/share/plasma/desktoptheme", NIX_SW);
     BrandingCheck {
         label: "plasma_desktoptheme".into(),
         path: base.clone(),
         found: Path::new(&base).exists(),
-        matches: list_dirs(&base, 20, Some(&["ragos", "org.kde"])),
+        matches: list_dirs(&base, 20, Some(&["garos", "org.kde"])),
     }
 }
 
-/// RAGOS color schemes (`RAGOS*.colors`).
+/// GAROS color schemes (`GAROS*.colors`).
 pub fn plasma_color_schemes() -> BrandingCheck {
     let base = format!("{}/share/color-schemes", NIX_SW);
     BrandingCheck {
@@ -478,19 +478,19 @@ pub fn plasma_color_schemes() -> BrandingCheck {
         path: base.clone(),
         found: Path::new(&base).exists(),
         matches: list_files_matching(&base, 20, |name| {
-            name.starts_with("RAGOS") && name.ends_with(".colors")
+            name.starts_with("GAROS") && name.ends_with(".colors")
         }),
     }
 }
 
-/// Wallpaper packages matching `ragos|org.ragos`.
+/// Wallpaper packages matching `garos|org.garos`.
 pub fn plasma_wallpapers() -> BrandingCheck {
     let base = format!("{}/share/wallpapers", NIX_SW);
     BrandingCheck {
         label: "plasma_wallpapers".into(),
         path: base.clone(),
         found: Path::new(&base).exists(),
-        matches: list_dirs(&base, 20, Some(&["ragos", "org.kde"])),
+        matches: list_dirs(&base, 20, Some(&["garos", "org.kde"])),
     }
 }
 
@@ -566,7 +566,7 @@ fn collect_baseline(cfg: &crate::config::Config) -> Option<BaselineReport> {
         }
     };
     // Repo root = parent of the baseline manifest, walked up to find flake.nix.
-    // For runtime paths (/etc/ragos/branding/...) the parent dir may not be
+    // For runtime paths (/etc/garos/branding/...) the parent dir may not be
     // the repo root — fall back to manifest dir if flake.nix isn't found.
     // Pass cfg.flake_path as a hint to disambiguate when `gar` is built
     // from a sibling repo (e.g. `gar/`) but auditing a different repo
@@ -706,11 +706,11 @@ mod tests {
     fn test_list_files_matching_filter() {
         let tmp = std::env::temp_dir().join(format!("gar-colorscheme-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
-        std::fs::write(tmp.join("RAGOSDark.colors"), "").unwrap();
-        std::fs::write(tmp.join("RAGOSLight.colors"), "").unwrap();
+        std::fs::write(tmp.join("GAROSDark.colors"), "").unwrap();
+        std::fs::write(tmp.join("GAROSLight.colors"), "").unwrap();
         std::fs::write(tmp.join("Breeze.colors"), "").unwrap();
         let matches = list_files_matching(tmp.to_str().unwrap(), 20, |n| {
-            n.starts_with("RAGOS") && n.ends_with(".colors")
+            n.starts_with("GAROS") && n.ends_with(".colors")
         });
         assert_eq!(matches.len(), 2);
         std::fs::remove_dir_all(&tmp).unwrap();
@@ -728,10 +728,10 @@ mod tests {
     fn test_baseline_parse_happy_path() {
         let content = "\
 brandlab_manifest_version|2
-surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ragos
-surface|sddm|declarative-theme|present|themes/sddm/sddm.nix|theme=ragos-control
+surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=garos
+surface|sddm|declarative-theme|present|themes/sddm/sddm.nix|theme=garos-control
 config|sha256|themes/plymouth/plymouth.nix|f19b58a7d4dd908739d68d19e7226149219ff86e6822ff2a12640b3a6c912a7e
-asset|sha256|themes/plymouth/ragos/background.jpg|49153a82a8e40a943e18e25aa3b26f2cc5b8a40a9ec764a3247e26f267f0d22f
+asset|sha256|themes/plymouth/garos/background.jpg|49153a82a8e40a943e18e25aa3b26f2cc5b8a40a9ec764a3247e26f267f0d22f
 ";
         let m = parse_baseline_manifest_str(content).unwrap();
         assert_eq!(m.version, 2);
@@ -751,7 +751,7 @@ asset|sha256|themes/plymouth/ragos/background.jpg|49153a82a8e40a943e18e25aa3b26f
     #[test]
     fn test_baseline_parse_missing_header_errors() {
         let content = "\
-surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ragos
+surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=garos
 ";
         assert!(parse_baseline_manifest_str(content).is_err());
     }
@@ -778,7 +778,7 @@ surface|gtk|custom-theme|absent|repo-scan|no-explicit-gtk-theme
         let content = "\
 brandlab_manifest_version|2
 newshape|future|reserved|present|whatever/path|value=foo
-surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ragos
+surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=garos
 ";
         let m = parse_baseline_manifest_str(content).unwrap();
         assert_eq!(m.surfaces.len(), 1);
@@ -793,7 +793,7 @@ surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ra
 
         let content = format!(
             "brandlab_manifest_version|2\n\
-             surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ragos\n\
+             surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=garos\n\
              config|sha256|themes/plymouth/plymouth.nix|{}\n",
             sha256_hex_of(&tmp.join("themes/plymouth/plymouth.nix")),
         );
@@ -812,7 +812,7 @@ surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ra
         // Note: tmp/themes/plymouth/plymouth.nix is NOT created.
 
         let content = "brandlab_manifest_version|2\n\
-                       surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ragos\n";
+                       surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=garos\n";
         let m = parse_baseline_manifest_str(content).unwrap();
         let drifts = validate_against_baseline(&m, &tmp);
         assert_eq!(drifts.len(), 1);
@@ -833,7 +833,7 @@ surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ra
         let wrong_hash = sha256_hex_of_bytes(b"different content");
         let content = format!(
             "brandlab_manifest_version|2\n\
-             surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ragos\n\
+             surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=garos\n\
              config|sha256|themes/plymouth/plymouth.nix|{}\n",
             wrong_hash
         );
@@ -853,7 +853,7 @@ surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ra
         // Validates asset|sha256 against an actual file (uses metadata.json
         // from the real garos repo as the anchor for hash correctness).
         let real = Path::new(
-            "/home/rocha/Proyectos/garos-dev/garos/themes/plasma/wallpapers/org.ragos.wallpaper.light/metadata.json",
+            "/home/rocha/Proyectos/garos-dev/garos/themes/plasma/wallpapers/org.garos.wallpaper.light/metadata.json",
         );
         if !real.exists() {
             // Skip gracefully if test environment lacks the real file.
@@ -863,7 +863,7 @@ surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ra
         // Manifest points at the real path with the real hash — must match.
         let content = format!(
             "brandlab_manifest_version|2\n\
-             asset|sha256|themes/plasma/wallpapers/org.ragos.wallpaper.light/metadata.json|{}\n",
+             asset|sha256|themes/plasma/wallpapers/org.garos.wallpaper.light/metadata.json|{}\n",
             real_hash
         );
         let repo_root = Path::new("/home/rocha/Proyectos/garos-dev/garos");

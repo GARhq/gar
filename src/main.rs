@@ -2,7 +2,7 @@
 //!
 //! This binary replaces two legacy Bash CLIs:
 //! - `ragc` (image management, ~850 LOC across ragc/commands/*.sh)
-//! - `ragos` (server operations, 1303 LOC in server/ragos-cli.nix)
+//! - `garos` (server operations, 1303 LOC in server/garos-cli.nix)
 //!
 //! Both legacy CLIs are kept as shims that delegate here for 6 months.
 
