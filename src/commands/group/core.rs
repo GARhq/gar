@@ -1,36 +1,11 @@
-//! `gar group` subcommand — manages groups.
-
 use chrono::Utc;
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::cli::GroupCmd;
 use crate::config::Config;
 use crate::error::{GarError, Result};
 use crate::output;
-use crate::services::group_system::{
-    self, CatalogEntry, GroupCatalog, GroupPermissions, QuotaSpec,
-};
-
-pub async fn dispatch(cmd: GroupCmd) -> Result<()> {
-    match cmd {
-        GroupCmd::Add {
-            groupname,
-            description,
-            storage_quota,
-        } => cmd_add(&groupname, description.as_deref(), storage_quota.as_deref()).await,
-        GroupCmd::List => cmd_list().await,
-        GroupCmd::Delete { groupname, archive } => cmd_delete(&groupname, archive).await,
-        GroupCmd::Chmod { groupname, perms } => cmd_chmod(&groupname, &perms).await,
-        GroupCmd::Members {
-            groupname,
-            add,
-            remove,
-        } => cmd_members(&groupname, add.as_deref(), remove.as_deref()).await,
-        GroupCmd::Permissions { groupname } => cmd_permissions(&groupname).await,
-        GroupCmd::EnsureDefaults => cmd_ensure_defaults().await,
-    }
-}
+use crate::services::group_system::{self, CatalogEntry, GroupCatalog, QuotaSpec};
 
 #[derive(Debug, Serialize)]
 pub struct GroupAddResult {
@@ -48,33 +23,6 @@ pub struct GroupDeleteResult {
     pub archive: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct GroupMembersResult {
-    pub group: String,
-    pub added: Option<String>,
-    pub removed: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GroupChmodResult {
-    pub group: String,
-    pub mode: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GroupPermissionsResult {
-    pub group: String,
-    pub mode: String,
-    pub members: Vec<String>,
-    pub extras: std::collections::HashMap<String, String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GroupEnsureDefaultsResult {
-    pub created: Vec<String>,
-    pub already_existed: Vec<String>,
-}
-
 pub async fn cmd_add(
     name: &str,
     description: Option<&str>,
@@ -87,7 +35,6 @@ pub async fn cmd_add(
         ));
     }
     if group_system::is_permanent(name) && group_system::group_exists(name) {
-        // admin exists: idempotent — succeed without re-creating
         return report_existing(name, &cfg);
     }
     let description = description.unwrap_or("RAGOS Group");
@@ -315,205 +262,9 @@ pub async fn cmd_delete(name: &str, archive: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn cmd_members(name: &str, add: Option<&str>, remove: Option<&str>) -> Result<()> {
-    let cfg = Config::from_env()?;
-    if name.is_empty() {
-        return Err(GarError::invalid_argument(
-            "uso: gar group members <nome> [--add user|--remove user]",
-        ));
-    }
-    if !group_system::group_exists(name) {
-        return Err(GarError::user(format!("grupo nao existe: {}", name)));
-    }
-    if add.is_none() && remove.is_none() {
-        // Listing mode
-        let members = group_system::group_members(name);
-        if cfg.json_output {
-            output::json(&serde_json::json!({"group": name, "members": members}))?;
-        } else {
-            output::section(&format!("Membros de '{}'", name));
-            if members.is_empty() {
-                println!("  (nenhum)");
-            } else {
-                for m in &members {
-                    println!("  {}", m);
-                }
-            }
-        }
-        return Ok(());
-    }
-    if let Some(user) = add {
-        group_system::group_add_member(name, user).await?;
-    }
-    if let Some(user) = remove {
-        group_system::group_remove_member(name, user).await?;
-    }
-    if cfg.json_output {
-        output::json(&GroupMembersResult {
-            group: name.into(),
-            added: add.map(str::to_string),
-            removed: remove.map(str::to_string),
-        })?;
-    } else {
-        output::ok(format!("membros de '{}' atualizados", name));
-        if let Some(u) = add {
-            println!("  adicionado:  {}", u);
-        }
-        if let Some(u) = remove {
-            println!("  removido:    {}", u);
-        }
-    }
-    Ok(())
-}
-
-pub async fn cmd_chmod(name: &str, perms: &str) -> Result<()> {
-    let cfg = Config::from_env()?;
-    let sector = group_system::sector_path(&cfg.storage_base, name);
-    if !sector.exists() {
-        return Err(GarError::user(format!(
-            "setor do grupo ausente: {}",
-            sector.display()
-        )));
-    }
-    let mode = parse_mode(perms)?;
-
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&sector, PermissionsExt::from_mode(mode))?;
-    // Persist into permissions file so `gar group permissions` reflects it.
-    let perms_path = group_system::permissions_path(&sector);
-    let mut current = GroupPermissions::load(&perms_path).unwrap_or_default();
-    current.mode = format!("{:o}", mode & 0o7777);
-    current.save(&perms_path)?;
-
-    if cfg.json_output {
-        output::json(&GroupChmodResult {
-            group: name.into(),
-            mode: format!("{:o}", mode & 0o7777),
-        })?;
-    } else {
-        output::ok(format!("modo do grupo '{}' atualizado", name));
-        println!("  modo: {:o}", mode & 0o7777);
-    }
-    Ok(())
-}
-
-pub async fn cmd_permissions(name: &str) -> Result<()> {
-    let cfg = Config::from_env()?;
-    let sector = group_system::sector_path(&cfg.storage_base, name);
-    if !sector.exists() {
-        return Err(GarError::user(format!(
-            "setor do grupo ausente: {}",
-            sector.display()
-        )));
-    }
-    let perms_path = group_system::permissions_path(&sector);
-    let members = group_system::group_members(name);
-    let perms = if perms_path.exists() {
-        GroupPermissions::load(&perms_path)?
-    } else {
-        GroupPermissions {
-            mode: "0750".into(),
-            members: members.clone(),
-            extra: Default::default(),
-        }
-    };
-    if cfg.json_output {
-        output::json(&GroupPermissionsResult {
-            group: name.into(),
-            mode: perms.mode,
-            members,
-            extras: perms.extra,
-        })?;
-    } else {
-        output::section(&format!("Permissões do grupo '{}'", name));
-        println!("  setor: {}", sector.display());
-        println!("  modo:  {}", perms.mode);
-        println!("  membros:");
-        if members.is_empty() {
-            println!("    (nenhum)");
-        } else {
-            for m in &members {
-                println!("    {}", m);
-            }
-        }
-        if !perms.extra.is_empty() {
-            println!("  extras:");
-            for (k, v) in &perms.extra {
-                println!("    {}={}", k, v);
-            }
-        }
-    }
-    Ok(())
-}
-
-pub async fn cmd_ensure_defaults() -> Result<()> {
-    let cfg = Config::from_env()?;
-    let defaults: &[(&str, &str, &str)] = &[
-        ("admin", "RAGOS administrators", "10G"),
-        ("users", "Default user sector", "1T"),
-        ("lab", "Laboratory sector", "500G"),
-    ];
-    let mut created = Vec::new();
-    let mut already = Vec::new();
-    for (name, description, quota) in defaults {
-        if group_system::group_exists(name) {
-            already.push(name.to_string());
-            continue;
-        }
-        cmd_add(name, Some(description), Some(quota)).await?;
-        created.push(name.to_string());
-    }
-    if cfg.json_output {
-        output::json(&GroupEnsureDefaultsResult {
-            created,
-            already_existed: already,
-        })?;
-    } else {
-        output::ok("default groups ensured");
-        if !created.is_empty() {
-            println!("  criados:    {}", created.join(", "));
-        }
-        if !already.is_empty() {
-            println!("  preexistente: {}", already.join(", "));
-        }
-    }
-    Ok(())
-}
-
-fn parse_mode(s: &str) -> Result<u32> {
-    let s = s.trim().trim_start_matches('0');
-    let v = u32::from_str_radix(s, 8)
-        .map_err(|_| GarError::invalid_argument(format!("modo invalido (octal): {}", s)))?;
-    if v > 0o7777 {
-        return Err(GarError::invalid_argument(format!(
-            "modo fora do range (max 7777): {:o}",
-            v
-        )));
-    }
-    Ok(v)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_mode_basic() {
-        assert_eq!(parse_mode("750").unwrap(), 0o750);
-        assert_eq!(parse_mode("0750").unwrap(), 0o750);
-        assert_eq!(parse_mode("  777 ").unwrap(), 0o777);
-    }
-
-    #[test]
-    fn test_parse_mode_rejects_non_octal() {
-        assert!(parse_mode("999").is_err()); // 9 is not octal
-        assert!(parse_mode("0o750").is_err());
-    }
-
-    #[test]
-    fn test_parse_mode_rejects_overflow() {
-        assert!(parse_mode("10000").is_err());
-    }
 
     #[test]
     fn test_add_result_serializes() {
