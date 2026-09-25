@@ -66,7 +66,7 @@ pub async fn cmd_switch() -> Result<()> {
     output::section("==> gar server switch");
     runtime_guard::validate(&cfg)?;
     runtime_guard::reexec_as_root_if_needed("server switch")?;
-    run_nixos_rebuild(&cfg, "switch")?;
+    run_nh_os(&cfg, "switch")?;
     output::ok("switch concluído");
     Ok(())
 }
@@ -77,7 +77,7 @@ pub async fn cmd_test() -> Result<()> {
     output::section("==> gar server test");
     runtime_guard::validate(&cfg)?;
     runtime_guard::reexec_as_root_if_needed("server test")?;
-    run_nixos_rebuild(&cfg, "test")?;
+    run_nh_os(&cfg, "test")?;
     output::ok("test concluído");
     Ok(())
 }
@@ -100,16 +100,44 @@ pub async fn cmd_rollback() -> Result<()> {
     Ok(())
 }
 
-/// `gar server update` — flake update + check + switch.
+/// `gar server update` — flake update + check + safe switch (test -> health check -> switch).
 pub async fn cmd_update() -> Result<()> {
     let cfg = Config::from_env()?;
-    output::section("==> gar server update");
+    output::section("==> gar server update (Safe Update Flow)");
     runtime_guard::validate(&cfg)?;
     runtime_guard::reexec_as_root_if_needed("server update")?;
+    
     nix::flake_update(&cfg.flake_path).await?;
     nix::flake_check(&cfg.flake_path).await?;
-    run_nixos_rebuild(&cfg, "switch")?;
-    output::ok("update + check + switch concluído");
+    
+    output::info("Aplicando configuração em modo de teste (nh os test)...");
+    run_nh_os(&cfg, "test")?;
+    
+    output::info("Checando a saúde dos serviços críticos...");
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    
+    let critical_services = ["nginx", "dnsmasq", "nfs-server"];
+    let mut fails = 0;
+    for svc in critical_services.iter() {
+        let st = Command::new("systemctl")
+            .args(["is-active", "--quiet", svc])
+            .status()?;
+        if !st.success() {
+            output::warn(&format!("[ERRO] Serviço {} falhou após atualização!", svc));
+            fails += 1;
+        }
+    }
+    
+    if fails > 0 {
+        output::warn("[CRÍTICO] Atualização quebrou a infraestrutura. Revertendo (rollback)...");
+        let _ = Command::new("nixos-rebuild").args(["switch", "--rollback"]).status();
+        return Err(GarError::config("Update falhou nos health checks. Rollback concluído. O sistema retornou para a versão anterior."));
+    }
+    
+    output::info("Serviços estáveis. Consolidando no boot (nh os switch)...");
+    run_nh_os(&cfg, "switch")?;
+    
+    output::ok("Atualização GAROS concluída sem quedas! 🎉");
     Ok(())
 }
 
@@ -270,19 +298,19 @@ pub async fn cmd_status() -> Result<()> {
     Ok(())
 }
 
-/// Run nixos-rebuild with the appropriate flags.
-fn run_nixos_rebuild(cfg: &Config, action: &str) -> Result<()> {
-    let installable = cfg.installable();
-    let mut cmd = Command::new("nixos-rebuild");
+/// Run nh os with the appropriate flags.
+fn run_nh_os(cfg: &Config, action: &str) -> Result<()> {
+    let mut cmd = Command::new("nh");
     cmd.env("GAR_ENFORCE_RUNTIME_GUARDS", "1");
+    cmd.arg("os");
     cmd.arg(action);
-    if action == "switch" || action == "test" {
-        cmd.args(["--impure", "--flake", &installable]);
-    }
+    cmd.arg(&cfg.flake_path);
+    cmd.args(["--hostname", &cfg.target_host]);
+    
     let status = cmd.status()?;
     if !status.success() {
         return Err(GarError::config(format!(
-            "nixos-rebuild {} falhou: exit {}",
+            "nh os {} falhou: exit {}",
             action,
             status.code().unwrap_or(-1)
         )));
