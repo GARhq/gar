@@ -67,7 +67,10 @@ fn is_btrfs_subvolume(path: &Path) -> bool {
 /// Cria um subvolume BTRFS em `path`, migrando dados existentes se necessário.
 fn create_btrfs_subvolume(path: &Path) -> Result<(), GarError> {
     if is_btrfs_subvolume(path) {
-        eprintln!("[GAROS:provision-home] Subvolume já existe em {}", path.display());
+        eprintln!(
+            "[GAROS:provision-home] Subvolume já existe em {}",
+            path.display()
+        );
         return Ok(());
     }
 
@@ -82,7 +85,10 @@ fn create_btrfs_subvolume(path: &Path) -> Result<(), GarError> {
         let parent = path.parent().unwrap_or(Path::new("/"));
         let tmp = parent.join(format!(".garos-migrate-{ts}"));
         std::fs::create_dir_all(&tmp).map_err(|e| {
-            GarError::validation(format!("Falha ao criar dir temporário {}: {e}", tmp.display()))
+            GarError::validation(format!(
+                "Falha ao criar dir temporário {}: {e}",
+                tmp.display()
+            ))
         })?;
 
         // Mover conteúdo para tmp
@@ -104,7 +110,10 @@ fn create_btrfs_subvolume(path: &Path) -> Result<(), GarError> {
 
         // Remover diretório vazio para criar subvolume
         std::fs::remove_dir(path).map_err(|e| {
-            GarError::validation(format!("Falha ao remover dir vazio {}: {e}", path.display()))
+            GarError::validation(format!(
+                "Falha ao remover dir vazio {}: {e}",
+                path.display()
+            ))
         })?;
 
         Some(tmp)
@@ -117,7 +126,9 @@ fn create_btrfs_subvolume(path: &Path) -> Result<(), GarError> {
         .args(["subvolume", "create"])
         .arg(path)
         .status()
-        .map_err(|e| GarError::validation(format!("Falha ao executar btrfs subvolume create: {e}")))?;
+        .map_err(|e| {
+            GarError::validation(format!("Falha ao executar btrfs subvolume create: {e}"))
+        })?;
 
     if !status.success() {
         return Err(GarError::validation(format!(
@@ -313,4 +324,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp_base);
     }
 }
-

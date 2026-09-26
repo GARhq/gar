@@ -209,8 +209,8 @@ pub fn write_channel_ipxe(
 set build_id {build_id}
 isset ${{ip}} || dhcp
 echo Booting GAROS {channel_str} (${{build_id}})...
-kernel http://{server_ip}:{http_port}/netboot/{boot_dir}/bzImage init={init_path} ip=dhcp garos.primaryNicMac=${{net0/mac}} {kernel_params}
-initrd http://{server_ip}:{http_port}/netboot/{boot_dir}/initrd
+kernel https://{server_ip}:{http_port}/netboot/{boot_dir}/bzImage init={init_path} ip=dhcp garos.primaryNicMac=${{net0/mac}} garos.server_url=https://{server_ip}:{http_port} juicefs.meta=${{juicefs_meta}} {kernel_params}
+initrd https://{server_ip}:{http_port}/netboot/{boot_dir}/initrd
 boot || goto failed
 
 :failed
@@ -376,8 +376,8 @@ reboot
 set build_id {current_ver}
 isset ${{ip}} || dhcp
 echo Booting GAROS current (${{build_id}})...
-kernel http://{server_ip}:{http_port}/netboot/current/bzImage init={current_init} ip=dhcp garos.primaryNicMac=${{net0/mac}} {current_params}
-initrd http://{server_ip}:{http_port}/netboot/current/initrd
+kernel https://{server_ip}:{http_port}/netboot/current/bzImage init={current_init} ip=dhcp garos.primaryNicMac=${{net0/mac}} garos.server_url=https://{server_ip}:{http_port} juicefs.meta=${{juicefs_meta}} {current_params}
+initrd https://{server_ip}:{http_port}/netboot/current/initrd
 boot || goto failed
 
 :failed
@@ -400,8 +400,8 @@ shell
 set build_id {rescue_ver}
 isset ${{ip}} || dhcp
 echo Booting GAROS rescue (${{build_id}})...
-kernel http://{server_ip}:{http_port}/netboot/rescue/bzImage init={rescue_init} ip=dhcp garos.primaryNicMac=${{net0/mac}} {rescue_params}
-initrd http://{server_ip}:{http_port}/netboot/rescue/initrd
+kernel https://{server_ip}:{http_port}/netboot/rescue/bzImage init={rescue_init} ip=dhcp garos.primaryNicMac=${{net0/mac}} garos.server_url=https://{server_ip}:{http_port} juicefs.meta=${{juicefs_meta}} {rescue_params}
+initrd https://{server_ip}:{http_port}/netboot/rescue/initrd
 boot || goto failed
 
 :failed
@@ -782,7 +782,7 @@ mod tests {
         assert!(body.contains("quiet splash"));
         assert!(body.contains("shell"));
         // K-130R-2 (2026-09-07): kernel cmdline must emit `garos.primaryNicMac=`,
-        // NOT `ragos.primaryNicMac=`. The client reads this token in
+        // NOT `garos.primaryNicMac=`. The client reads this token in
         // garos/client/network/stage2-networkd.nix (case `garos.primaryNicMac=*`).
         // Drift here = NIC pinning silently broken at boot.
         assert!(
@@ -790,8 +790,8 @@ mod tests {
             "kernel cmdline must use `garos.primaryNicMac=` (post-K-130R-2); got:\n{body}"
         );
         assert!(
-            !body.contains("ragos.primaryNicMac="),
-            "kernel cmdline must NOT contain legacy `ragos.primaryNicMac=`; got:\n{body}"
+            !body.contains("garos.primaryNicMac="),
+            "kernel cmdline must NOT contain legacy `garos.primaryNicMac=`; got:\n{body}"
         );
         cleanup(&dir);
     }
@@ -978,8 +978,8 @@ mod tests {
         );
         eprintln!("[K-130R-2 demo] canonical kernel cmdline token: `garos.primaryNicMac=`");
         eprintln!(
-            "[K-130R-2 demo] legacy banned kernel cmdline token `ragos.primaryNicMac=`: {}",
-            if body.contains("ragos.primaryNicMac=") {
+            "[K-130R-2 demo] legacy banned kernel cmdline token `garos.primaryNicMac=`: {}",
+            if body.contains("garos.primaryNicMac=") {
                 "PRESENT (REGRESSION — K-130R-2 VIOLATED)"
             } else {
                 "absent (correct)"

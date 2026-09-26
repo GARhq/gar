@@ -1,8 +1,8 @@
-use std::process::Command;
 use crate::config::Config;
 use crate::error::{GarError, Result};
 use crate::output;
 use crate::services::{generations, nix, runtime_guard};
+use std::process::Command;
 
 /// `gar server switch` — nixos-rebuild switch.
 pub async fn cmd_switch() -> Result<()> {
@@ -50,16 +50,16 @@ pub async fn cmd_update() -> Result<()> {
     output::section("==> gar server update (Safe Update Flow)");
     runtime_guard::validate(&cfg)?;
     runtime_guard::reexec_as_root_if_needed("server update")?;
-    
+
     nix::flake_update(&cfg.flake_path).await?;
     nix::flake_check(&cfg.flake_path).await?;
-    
+
     output::info("Aplicando configuração em modo de teste (nh os test)...");
     run_nh_os(&cfg, "test")?;
-    
+
     output::info("Checando a saúde dos serviços críticos...");
     std::thread::sleep(std::time::Duration::from_secs(3));
-    
+
     let critical_services = ["nginx", "dnsmasq", "nfs-server"];
     let mut fails = 0;
     for svc in critical_services.iter() {
@@ -71,16 +71,20 @@ pub async fn cmd_update() -> Result<()> {
             fails += 1;
         }
     }
-    
+
     if fails > 0 {
         output::warn("[CRÍTICO] Atualização quebrou a infraestrutura. Revertendo (rollback)...");
-        let _ = Command::new("nixos-rebuild").args(["switch", "--rollback"]).status();
-        return Err(GarError::config("Update falhou nos health checks. Rollback concluído."));
+        let _ = Command::new("nixos-rebuild")
+            .args(["switch", "--rollback"])
+            .status();
+        return Err(GarError::config(
+            "Update falhou nos health checks. Rollback concluído.",
+        ));
     }
-    
+
     output::info("Serviços estáveis. Consolidando no boot (nh os switch)...");
     run_nh_os(&cfg, "switch")?;
-    
+
     output::ok("Atualização GAROS concluída sem quedas! 🎉");
     Ok(())
 }
@@ -94,7 +98,15 @@ pub async fn cmd_clean() -> Result<()> {
     let nh_check = Command::new("which").arg("nh").output();
     if nh_check.map(|o| o.status.success()).unwrap_or(false) {
         let status = Command::new("nh")
-            .args(["clean", "all", "--keep", "5", "--keep-since", "7d", "--optimise"])
+            .args([
+                "clean",
+                "all",
+                "--keep",
+                "5",
+                "--keep-since",
+                "7d",
+                "--optimise",
+            ])
             .status()?;
         if status.success() {
             output::ok("nh clean all concluído");
@@ -118,7 +130,7 @@ pub fn run_nh_os(cfg: &Config, action: &str) -> Result<()> {
     cmd.arg(action);
     cmd.arg(&cfg.flake_path);
     cmd.args(["--hostname", &cfg.target_host]);
-    
+
     let status = cmd.status()?;
     if !status.success() {
         return Err(GarError::config(format!(

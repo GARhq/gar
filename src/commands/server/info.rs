@@ -1,10 +1,10 @@
-use std::env;
-use std::process::Command;
-use serde::Serialize;
 use crate::config::Config;
 use crate::error::{GarError, Result};
 use crate::output;
 use crate::services::{generations, nix};
+use serde::Serialize;
+use std::env;
+use std::process::Command;
 
 #[derive(Debug, Serialize)]
 pub struct StatusReport {

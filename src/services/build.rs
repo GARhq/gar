@@ -251,43 +251,93 @@ pub fn stage_generation(
     std::fs::copy(&artifact.kernel_path, generation_dir.join("bzImage"))?;
     std::fs::copy(&artifact.initrd_path, generation_dir.join("initrd"))?;
 
+    // Copy EROFS root image (injected into toplevel by garos-dev)
+    if artifact.system_path.join("garos-root.erofs").exists() {
+        std::fs::copy(
+            artifact.system_path.join("garos-root.erofs"),
+            generation_dir.join("garos-root.erofs"),
+        )?;
+    }
+
     // Write .init_path and .kernel_params sidecars.
     std::fs::write(
         generation_dir.join(".init_path"),
         artifact.init_path.display().to_string(),
     )?;
     if artifact.kernel_params.exists() {
-        std::fs::copy(
-            &artifact.kernel_params,
-            generation_dir.join(".kernel_params"),
-        )?;
+        let mut params = std::fs::read_to_string(&artifact.kernel_params)?;
+        if !params.ends_with('\n') {
+            params.push(' ');
+        }
+
+        let erofs_sha = if generation_dir.join("garos-root.erofs").exists() {
+            sha256_file(&generation_dir.join("garos-root.erofs"))?
+        } else {
+            String::new()
+        };
+
+        if !erofs_sha.is_empty() {
+            params.push_str(&format!("erofs.sha256={} ", erofs_sha));
+        }
+
+        std::fs::write(generation_dir.join(".kernel_params"), params.trim())?;
     }
 
     // Compute sha256 of the artifacts.
     let kernel_sha = sha256_file(&generation_dir.join("bzImage"))?;
     let initrd_sha = sha256_file(&generation_dir.join("initrd"))?;
 
+    let erofs_sha = if generation_dir.join("garos-root.erofs").exists() {
+        sha256_file(&generation_dir.join("garos-root.erofs"))?
+    } else {
+        String::new()
+    };
+
+    // Compute next version for Anti-Downgrade protection
+    let mut next_version = 1;
+    if images_root.exists() {
+        if let Ok(entries) = std::fs::read_dir(images_root) {
+            for entry in entries.flatten() {
+                if let Ok(m) = crate::services::manifest::read(&entry.path()) {
+                    if m.version >= next_version {
+                        next_version = m.version + 1;
+                    }
+                }
+            }
+        }
+    }
+
     // Build manifest.
     use crate::services::manifest::{Artifacts, Checksums, Manifest, Status};
     let manifest = Manifest {
         id: build_id.into(),
         timestamp: artifact.timestamp.clone(),
+        version: next_version,
         system_path: artifact.system_path.display().to_string(),
         init_path: artifact.init_path.display().to_string(),
         artifacts: Artifacts {
             kernel: "bzImage".into(),
             initrd: "initrd".into(),
+            erofs: "garos-root.erofs".into(),
         },
         checksums: Checksums {
             kernel: kernel_sha,
             initrd: initrd_sha,
+            erofs: erofs_sha,
         },
         status: Status::Staged,
         target: target.into(),
         channel: channel.into(),
         hardware_class: crate::services::channel::target_hardware_class_str(target).to_string(),
+        signature: String::new(),
     };
     crate::services::manifest::write(&generation_dir, &manifest)?;
+
+    // Crypto logic: Ensure keys exist and sign the manifest
+    // This allows Zero-Trust clients to authenticate the payload before downloading EROFS
+    let keys_dir = std::path::Path::new("/var/lib/garos/keys");
+    crate::services::crypto::ensure_keys(keys_dir)?;
+    crate::services::crypto::sign_manifest(keys_dir, &generation_dir.join("manifest.json"))?;
 
     // GC root.
     let gc_root_path = generation_dir.join(".gcroot");

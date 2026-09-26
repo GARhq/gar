@@ -1,11 +1,11 @@
 use crate::cli::SecretsCmd;
+use crate::config::Config;
 use crate::error::{GarError, Result};
 use crate::output;
-use crate::config::Config;
-use std::io::{Read, Write};
-use std::str::FromStr;
 use age::x25519::{Identity, Recipient};
 use serde::Serialize;
+use std::io::{Read, Write};
+use std::str::FromStr;
 
 #[derive(Debug, Serialize)]
 pub struct EncryptResult {
@@ -25,25 +25,25 @@ pub async fn dispatch(cmd: SecretsCmd) -> Result<()> {
 }
 
 fn encrypt(value: &str, pubkey: &str) -> Result<()> {
-    let recipient = Recipient::from_str(pubkey).map_err(|e| {
-        GarError::config(format!("Failed to parse Age public key: {}", e))
-    })?;
+    let recipient = Recipient::from_str(pubkey)
+        .map_err(|e| GarError::config(format!("Failed to parse Age public key: {}", e)))?;
 
-    let encryptor = age::Encryptor::with_recipients(std::iter::once(&recipient as &dyn age::Recipient))
-        .expect("Failed to create encryptor");
+    let encryptor =
+        age::Encryptor::with_recipients(std::iter::once(&recipient as &dyn age::Recipient))
+            .expect("Failed to create encryptor");
 
     let mut encrypted = vec![];
-    let mut writer = encryptor.wrap_output(&mut encrypted).map_err(|e| {
-        GarError::config(format!("Failed to wrap output: {}", e))
-    })?;
+    let mut writer = encryptor
+        .wrap_output(&mut encrypted)
+        .map_err(|e| GarError::config(format!("Failed to wrap output: {}", e)))?;
 
-    writer.write_all(value.as_bytes()).map_err(|e| {
-        GarError::config(format!("Failed to write secret: {}", e))
-    })?;
+    writer
+        .write_all(value.as_bytes())
+        .map_err(|e| GarError::config(format!("Failed to write secret: {}", e)))?;
 
-    writer.finish().map_err(|e| {
-        GarError::config(format!("Failed to finish encryption: {}", e))
-    })?;
+    writer
+        .finish()
+        .map_err(|e| GarError::config(format!("Failed to finish encryption: {}", e)))?;
 
     // Encode to base64 or hex? Age CLI uses ASCII armor.
     // For simplicity, let's output hex or base64. Let's use base64 (standard rust ecosystem usually has base64 crate, wait, let's use hex since it's built-in or just standard print).
@@ -65,13 +65,11 @@ fn encrypt(value: &str, pubkey: &str) -> Result<()> {
 }
 
 fn decrypt(value: &str, identity_path: &std::path::Path) -> Result<()> {
-    let identity_str = std::fs::read_to_string(identity_path).map_err(|e| {
-        GarError::config(format!("Failed to read identity file: {}", e))
-    })?;
+    let identity_str = std::fs::read_to_string(identity_path)
+        .map_err(|e| GarError::config(format!("Failed to read identity file: {}", e)))?;
 
-    let identity = Identity::from_str(identity_str.trim()).map_err(|e| {
-        GarError::config(format!("Failed to parse Age identity: {}", e))
-    })?;
+    let identity = Identity::from_str(identity_str.trim())
+        .map_err(|e| GarError::config(format!("Failed to parse Age identity: {}", e)))?;
 
     // Parse the hex string back to bytes
     let encrypted = (0..value.len())
@@ -80,18 +78,17 @@ fn decrypt(value: &str, identity_path: &std::path::Path) -> Result<()> {
         .collect::<std::result::Result<Vec<u8>, _>>()
         .map_err(|e| GarError::config(format!("Failed to parse hex: {}", e)))?;
 
-    let decryptor = age::Decryptor::new(&encrypted[..]).map_err(|e| {
-        GarError::config(format!("Failed to create decryptor: {}", e))
-    })?;
+    let decryptor = age::Decryptor::new(&encrypted[..])
+        .map_err(|e| GarError::config(format!("Failed to create decryptor: {}", e)))?;
 
-    let mut reader = decryptor.decrypt(std::iter::once(&identity as &dyn age::Identity)).map_err(|e| {
-        GarError::config(format!("Failed to decrypt: {}", e))
-    })?;
+    let mut reader = decryptor
+        .decrypt(std::iter::once(&identity as &dyn age::Identity))
+        .map_err(|e| GarError::config(format!("Failed to decrypt: {}", e)))?;
 
     let mut decrypted = String::new();
-    reader.read_to_string(&mut decrypted).map_err(|e| {
-        GarError::config(format!("Failed to read decrypted string: {}", e))
-    })?;
+    reader
+        .read_to_string(&mut decrypted)
+        .map_err(|e| GarError::config(format!("Failed to read decrypted string: {}", e)))?;
 
     let cfg = Config::from_env().unwrap_or_default();
     if cfg.json_output {

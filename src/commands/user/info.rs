@@ -120,7 +120,10 @@ pub async fn cmd_activity(username: &str) -> Result<()> {
     }
     output::section(&format!("Atividade de '{}'", username));
     for s in &sessions {
-        println!("  [{}] [{}] tty={} ip={}", s.timestamp, s.action, s.tty, s.ip);
+        println!(
+            "  [{}] [{}] tty={} ip={}",
+            s.timestamp, s.action, s.tty, s.ip
+        );
     }
     Ok(())
 }

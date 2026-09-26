@@ -25,6 +25,8 @@ pub enum Status {
 pub struct Manifest {
     pub id: String,
     pub timestamp: String,
+    #[serde(default)]
+    pub version: u64,
     #[serde(rename = "system_path")]
     pub system_path: String,
     #[serde(rename = "init_path")]
@@ -36,18 +38,24 @@ pub struct Manifest {
     pub channel: String,
     #[serde(rename = "hardwareClass")]
     pub hardware_class: String,
+    #[serde(default)]
+    pub signature: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artifacts {
     pub kernel: String,
     pub initrd: String,
+    #[serde(default)]
+    pub erofs: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checksums {
     pub kernel: String,
     pub initrd: String,
+    #[serde(default)]
+    pub erofs: String,
 }
 
 /// Read manifest from `<generation_dir>/manifest.json`.
@@ -208,20 +216,24 @@ mod tests {
         Manifest {
             id: "v20260101-120000".into(),
             timestamp: "2026-01-01T12:00:00Z".into(),
+            version: 42,
             system_path: "/nix/store/abc-system".into(),
             init_path: "/nix/store/abc-init".into(),
             artifacts: Artifacts {
                 kernel: "bzImage".into(),
                 initrd: "initrd".into(),
+                erofs: "garos-root.erofs".into(),
             },
             checksums: Checksums {
                 kernel: "deadbeef".into(),
                 initrd: "cafebabe".into(),
+                erofs: "fbadbeef".into(),
             },
             status: Status::Active,
             target: "desktop-generic".into(),
             channel: "generic".into(),
             hardware_class: "physical-generic".into(),
+            signature: "sig123".into(),
         }
     }
 

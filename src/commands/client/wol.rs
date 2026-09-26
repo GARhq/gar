@@ -1,7 +1,7 @@
-use serde::Serialize;
 use crate::error::{GarError, Result};
 use crate::output;
 use crate::services::client::{build_magic_packet, normalize_mac, send_wol};
+use serde::Serialize;
 
 /// JSON summary emitted by `gar client wake --json`.
 #[derive(Debug, Serialize)]

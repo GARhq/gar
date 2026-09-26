@@ -12,6 +12,7 @@ pub mod btrfs;
 pub mod build;
 pub mod channel;
 pub mod client;
+pub mod crypto;
 pub mod filesystem;
 pub mod generation;
 pub mod generations;

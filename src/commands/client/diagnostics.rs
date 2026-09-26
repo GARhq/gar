@@ -1,9 +1,9 @@
-use owo_colors::OwoColorize;
-use serde::Serialize;
 use crate::config::Config;
 use crate::error::Result;
 use crate::output;
 use crate::services::client::{self, ClientSessionReport};
+use owo_colors::OwoColorize;
+use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 struct ClientSessionSummary {

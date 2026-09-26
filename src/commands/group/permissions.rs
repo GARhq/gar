@@ -1,8 +1,8 @@
-use serde::Serialize;
 use crate::config::Config;
 use crate::error::{GarError, Result};
 use crate::output;
 use crate::services::group_system::{self, GroupPermissions};
+use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct GroupChmodResult {
