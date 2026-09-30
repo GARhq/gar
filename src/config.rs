@@ -54,8 +54,8 @@ impl Config {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
             // Flake / repo
-            flake_path: env_path("GAR_FLAKE_PATH", "/etc/gar")?,
-            target_host: env_string("GAR_TARGET_HOST", "srv-gar"),
+            flake_path: env_path("GAR_FLAKE_PATH", "/etc/garos")?,
+            target_host: env_string("GAR_TARGET_HOST", "srv-garos"),
 
             // Images
             images_root: env_path("GAR_IMAGES_ROOT", "/srv/data/images")?,
@@ -162,7 +162,7 @@ mod tests {
         // Ensure stale env vars from parallel tests don't contaminate this test.
         std::env::remove_var("GAR_HTTP_PORT");
         let cfg = Config::from_env().expect("config should load with defaults");
-        assert_eq!(cfg.target_host, "srv-gar");
+        assert_eq!(cfg.target_host, "srv-garos");
         assert_eq!(cfg.http_port, 8080);
         assert_eq!(cfg.keep_versions, 5);
     }
@@ -170,8 +170,8 @@ mod tests {
     #[test]
     fn test_installable_format() {
         let cfg = Config {
-            flake_path: PathBuf::from("/etc/gar"),
-            target_host: "srv-gar".into(),
+            flake_path: PathBuf::from("/etc/garos"),
+            target_host: "srv-garos".into(),
             images_root: PathBuf::from("/x"),
             http_root: PathBuf::from("/x"),
             data_root: PathBuf::from("/x"),
@@ -193,7 +193,7 @@ mod tests {
             verbose: false,
             no_color: false,
         };
-        assert_eq!(cfg.installable(), "git+file:///etc/gar#srv-gar");
+        assert_eq!(cfg.installable(), "git+file:///etc/garos#srv-garos");
     }
 
     #[test]
