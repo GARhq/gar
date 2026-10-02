@@ -42,6 +42,19 @@
             clippy
             pkg-config
           ];
+          # K-dev: auto-update flake lock quando flake.nix for modificado.
+          shellHook = ''
+            _flake_nix="$PWD/flake.nix"
+            _flake_lock="$PWD/flake.lock"
+            if [[ -f "$_flake_nix" && -f "$_flake_lock" ]] && [[ "$_flake_nix" -nt "$_flake_lock" ]]; then
+              printf '\033[1;33m[rebuild]\033[0m flake.nix modificado -> running nix flake update\n' >&2
+              if nix flake update 2>&1 | sed 's/^/  /' >&2; then
+                printf '\033[1;32m[rebuild]\033[0m flake.lock atualizado\n' >&2
+              else
+                printf '\033[1;31m[rebuild]\033[0m nix flake update FALHOU\n' >&2
+              fi
+            fi
+          '';
         };
       }) // {
         # Cross-platform override map (so non-default systems can still resolve).
