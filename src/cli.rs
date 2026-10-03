@@ -115,8 +115,24 @@ pub enum ServerCmd {
     Test,
     /// Rollback to previous NixOS generation
     Rollback,
-    /// Update flake inputs + check + switch
-    Update,
+    /// Update flake inputs + check + safe switch (matches GAROS garos-update flow)
+    Update {
+        /// Override the default critical services list (comma-separated, e.g. "nginx,dnsmasq,nfs-server")
+        #[arg(long, value_delimiter = ',')]
+        services: Vec<String>,
+
+        /// Skip the free-space precheck on /nix
+        #[arg(long)]
+        skip_disk_check: bool,
+
+        /// Skip post-test health check (services must be alive after test)
+        #[arg(long)]
+        skip_health_check: bool,
+
+        /// Print the plan without executing rebuild/switch
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Clean old NixOS generations (nh clean or fallback)
     Clean,
     /// Run nix flake check
