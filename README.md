@@ -69,7 +69,18 @@ sudo gar server test
 sudo gar server rollback
 
 # Atualizar flake inputs (nix flake update) e aplicar switch
+# Replica o fluxo seguro do GAROS garos-update.sh: lock global, pré-checagem
+# de disco (3 GiB em /nix), teste com health-check de serviços críticos
+# (nginx, dnsmasq, nfs-server, garos-control-api, garos-control-web) e
+# rollback automático se algum serviço cair após o `nh os test`.
 sudo gar server update
+
+# Flags úteis:
+#   --dry-run              # imprime o plano sem executar
+#   --skip-disk-check      # pula o df /nix
+#   --skip-health-check    # pula a checagem de serviços
+#   --services "a,b,c"     # sobrescreve a lista padrão de serviços críticos
+sudo gar server update --dry-run --skip-health-check --services "nginx,dnsmasq"
 ```
 
 ### 2. Gestão de Imagens do Cliente Diskless (`gar image`)
