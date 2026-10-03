@@ -17,7 +17,20 @@ pub async fn dispatch(cmd: ServerCmd) -> Result<()> {
         ServerCmd::Switch => lifecycle::cmd_switch().await,
         ServerCmd::Test => lifecycle::cmd_test().await,
         ServerCmd::Rollback => lifecycle::cmd_rollback().await,
-        ServerCmd::Update => lifecycle::cmd_update().await,
+        ServerCmd::Update {
+            services,
+            skip_disk_check,
+            skip_health_check,
+            dry_run,
+        } => {
+            lifecycle::cmd_update(
+                services,
+                skip_disk_check,
+                skip_health_check,
+                dry_run,
+            )
+            .await
+        }
         ServerCmd::Clean => lifecycle::cmd_clean().await,
         ServerCmd::Check {
             inventory,
