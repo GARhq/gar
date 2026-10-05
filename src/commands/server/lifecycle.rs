@@ -5,7 +5,7 @@ use std::time::Duration;
 use crate::config::Config;
 use crate::error::{GarError, Result};
 use crate::output;
-use crate::services::{generations, lock as global_lock, nix, runtime_guard};
+use crate::services::{generations, lock as global_lock, runtime_guard};
 
 /// Default critical services guarded after `nh os test` (matches GAROS garos-update.sh).
 ///
@@ -125,14 +125,42 @@ pub async fn cmd_update(
         "server update",
         Duration::from_secs(UPDATE_LOCK_TIMEOUT_SECS),
         || {
-            // 1) flake update
+            // 1) flake update (sync — call nix via std::process::Command
+            //    directly to avoid "Cannot start a runtime from within
+            //    a runtime" — `block_on` inside #[tokio::main] is UB).
             output::info("[1/6] Atualizando flake inputs...");
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(nix::flake_update(&flake_path))?;
+            use std::process::Command;
+            let status = Command::new("nix")
+                .args(["flake", "update"])
+                .current_dir(&flake_path)
+                .status();
+            match status {
+                Ok(s) if s.success() => {}
+                Ok(s) => Err(GarError::config(format!(
+                    "nix flake update falhou (exit {})",
+                    s.code().unwrap_or(-1)
+                )))?,
+                Err(e) => Err(GarError::config(format!(
+                    "nix flake update: {e}"
+                )))?,
+            }
 
-            // 2) flake check
+            // 2) flake check (K-2605: --no-build for fast eval)
             output::info("[2/6] Validando flake (nix flake check)...");
-            rt.block_on(nix::flake_check(&flake_path))?;
+            let status = Command::new("nix")
+                .args(["flake", "check", "--impure", "--no-build"])
+                .current_dir(&flake_path)
+                .status();
+            match status {
+                Ok(s) if s.success() => {}
+                Ok(s) => Err(GarError::config(format!(
+                    "nix flake check falhou (exit {})",
+                    s.code().unwrap_or(-1)
+                )))?,
+                Err(e) => Err(GarError::config(format!(
+                    "nix flake check: {e}"
+                )))?,
+            }
 
             // 3) disk precheck
             if !skip_disk_check {

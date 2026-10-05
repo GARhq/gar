@@ -160,7 +160,19 @@ mod tests {
     #[test]
     fn test_default_config_loads() {
         // Ensure stale env vars from parallel tests don't contaminate this test.
-        std::env::remove_var("GAR_HTTP_PORT");
+        // K-2026-10-05: parallel tests may have set GAR_HTTP_PORT, GAR_IMAGES_ROOT,
+        // etc. Restore defaults by removing all known overrides before reading.
+        for var in [
+            "GAR_HTTP_PORT",
+            "GAR_IMAGES_ROOT",
+            "GAR_FLAKE_PATH",
+            "GAR_TARGET_HOST",
+            "GAR_JSON_OUTPUT",
+            "GAR_TEST_SYSTEM_PATH",
+            "GAR_KEYS_DIR",
+        ] {
+            std::env::remove_var(var);
+        }
         let cfg = Config::from_env().expect("config should load with defaults");
         assert_eq!(cfg.target_host, "srv-garos");
         assert_eq!(cfg.http_port, 8080);
