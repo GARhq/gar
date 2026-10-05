@@ -1,12 +1,28 @@
 use std::path::Path;
 use std::process::Command;
 
+/// Generate or reuse Ed25519 keys for signing client images.
+///
+/// Keys default to `/var/lib/garos/keys/` (production). Tests can override
+/// via the `GAR_KEYS_DIR` environment variable. The matching public key
+/// must be committed to `GAROS/client/storage/garos.pub` for the Nix
+/// build to remain pure.
 pub fn ensure_keys(keys_dir: &Path) -> Result<(), crate::error::GarError> {
+    let keys_dir = if let Ok(env_dir) = std::env::var("GAR_KEYS_DIR") {
+        if !env_dir.is_empty() {
+            std::path::PathBuf::from(env_dir)
+        } else {
+            keys_dir.to_path_buf()
+        }
+    } else {
+        keys_dir.to_path_buf()
+    };
+
     let priv_path = keys_dir.join("garos.key");
     let pub_path = keys_dir.join("garos.pub");
 
     if !priv_path.exists() {
-        std::fs::create_dir_all(keys_dir)?;
+        std::fs::create_dir_all(&keys_dir)?;
 
         let status = Command::new("openssl")
             .args(["genpkey", "-algorithm", "ed25519", "-out"])
@@ -46,17 +62,20 @@ pub fn sign_manifest(keys_dir: &Path, manifest_path: &Path) -> Result<(), crate:
     let priv_path = keys_dir.join("garos.key");
     let sig_path = manifest_path.with_extension("sig");
 
-    let status = Command::new("openssl")
+    let output = Command::new("openssl")
         .args(["pkeyutl", "-sign", "-inkey"])
         .arg(&priv_path)
         .args(["-rawin", "-in"])
         .arg(manifest_path)
         .args(["-out"])
         .arg(&sig_path)
-        .status()?;
+        .output()?;
 
-    if !status.success() {
-        return Err(crate::error::GarError::build("Failed to sign manifest"));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(crate::error::GarError::build(format!(
+            "Failed to sign manifest: {stderr}"
+        )));
     }
 
     Ok(())

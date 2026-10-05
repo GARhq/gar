@@ -333,11 +333,17 @@ pub fn stage_generation(
     };
     crate::services::manifest::write(&generation_dir, &manifest)?;
 
-    // Crypto logic: Ensure keys exist and sign the manifest
-    // This allows Zero-Trust clients to authenticate the payload before downloading EROFS
-    let keys_dir = std::path::Path::new("/var/lib/garos/keys");
-    crate::services::crypto::ensure_keys(keys_dir)?;
-    crate::services::crypto::sign_manifest(keys_dir, &generation_dir.join("manifest.json"))?;
+    // Crypto logic: Ensure keys exist and sign the manifest.
+    // This allows Zero-Trust clients to authenticate the payload
+    // before downloading EROFS. The keys dir can be overridden via
+    // GAR_KEYS_DIR (used by tests and hermetic CI runs).
+    let keys_dir = std::env::var("GAR_KEYS_DIR")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/var/lib/garos/keys"));
+    crate::services::crypto::ensure_keys(&keys_dir)?;
+    crate::services::crypto::sign_manifest(&keys_dir, &generation_dir.join("manifest.json"))?;
 
     // GC root.
     let gc_root_path = generation_dir.join(".gcroot");

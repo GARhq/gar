@@ -6,8 +6,6 @@
 
 use std::fs;
 use std::os::unix::fs::{symlink, PermissionsExt};
-use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use chrono::Utc;
 use serde::Serialize;
@@ -16,7 +14,7 @@ use crate::cli::{Channel, ImageTarget};
 use crate::config::Config;
 use crate::error::{GarError, Result};
 use crate::output;
-use crate::services::build::{self, SKIP_BUILD_ENV, TEST_SYSTEM_PATH_ENV};
+use crate::services::build;
 use crate::services::manifest;
 
 /// Result of a successful image build, returned by `run()`.
@@ -31,83 +29,6 @@ pub struct BuildResult {
     pub ipxe_url: String,
 }
 
-/// Resolve or build the client NixOS toplevel system path.
-fn resolve_system_path(flake_root: &Path, target: &str) -> Result<PathBuf> {
-    // Check mock env vars first (for tests and CI)
-    if let Ok(mock) = std::env::var(TEST_SYSTEM_PATH_ENV) {
-        if !mock.is_empty() {
-            return Ok(PathBuf::from(mock));
-        }
-    }
-    if std::env::var(SKIP_BUILD_ENV).as_deref() == Ok("1") {
-        return Err(GarError::build(
-            "GAR_SKIP_BUILD=1 set; recusando execução de nix build",
-        ));
-    }
-
-    let flake_str = flake_root.display().to_string();
-    let flake_ref = if flake_str.contains(':') {
-        flake_str
-    } else {
-        let canonical = flake_root
-            .canonicalize()
-            .unwrap_or_else(|_| flake_root.to_path_buf());
-        format!("path:{}", canonical.display())
-    };
-
-    let candidates = [
-        format!("{flake_ref}#garos-client-{target}"),
-        format!("{flake_ref}#nixosConfigurations.garos-client-{target}.config.system.build.toplevel"),
-        format!("{flake_ref}#nixosConfigurations.garos-client-dev-{target}.config.system.build.toplevel"),
-        format!("{flake_ref}#nixosConfigurations.garos-client-official-{target}.config.system.build.toplevel"),
-    ];
-
-    let mut last_error = String::new();
-    for installable in &candidates {
-        output::info(format!("Executando nix build em {}...", installable));
-        let output = Command::new("nix")
-            .args([
-                "build",
-                "--impure",
-                "--print-out-paths",
-                "--no-link",
-                installable,
-            ])
-            .output()
-            .map_err(|e| GarError::build(format!("falha ao executar nix build: {}", e)))?;
-
-        if output.status.success() {
-            let stdout_str = String::from_utf8_lossy(&output.stdout);
-            if let Some(store_path) = stdout_str
-                .lines()
-                .map(|l| l.trim())
-                .find(|l| l.starts_with("/nix/store/") && Path::new(l).exists())
-            {
-                return Ok(PathBuf::from(store_path));
-            }
-        } else {
-            let stderr_str = String::from_utf8_lossy(&output.stderr);
-            last_error = stderr_str.to_string();
-            if stderr_str.contains("does not provide attribute")
-                || stderr_str.contains("is not an attribute")
-                || (stderr_str.contains("attribute") && stderr_str.contains("missing"))
-            {
-                continue;
-            }
-            return Err(GarError::build(format!(
-                "nix build falhou (exit {}): {}",
-                output.status.code().unwrap_or(-1),
-                stderr_str
-            )));
-        }
-    }
-
-    Err(GarError::build(format!(
-        "nenhum target do flake pôde ser construído: {}",
-        last_error
-    )))
-}
-
 /// Run the image build pipeline.
 pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Result<()> {
     let cfg = Config::from_env()?;
@@ -119,78 +40,72 @@ pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Resul
     output::info(format!("Canal: {}", channel.as_str()));
     output::info(format!("Imagens: {}", cfg.images_root.display()));
 
-    // Phase 1: Build (delegated to Nix)
+    // Phase 1: Build (delegated to Nix via build_or_reuse_system)
     output::info("Buildando imagem...");
-    let build_id = format!("v{}", Utc::now().format("%Y%m%d-%H%M%S"));
-    output::info(format!("Build ID: {}", build_id));
+    let build_id = build::compute_build_id(&cfg.images_root);
+    output::info(format!("Build ID: {build_id}"));
 
-    let system_path = resolve_system_path(&cfg.flake_path, target.as_str())?;
+    let system_path =
+        build::build_or_reuse_system(&cfg.flake_path, target.as_str(), channel.as_str())?;
     output::info(format!("System path: {}", system_path.display()));
 
-    // Phase 2: Publish artifacts into <images_root>/<build_id>
-    output::info("Publicando artefatos...");
-    let image_path = cfg.images_root.join(&build_id);
-    fs::create_dir_all(&image_path)
-        .map_err(|e| GarError::publish(format!("falha ao criar diretório de imagem: {}", e)))?;
-
-    // Copy kernel (prefer 'kernel', fallback to 'bzImage' or 'vmlinuz')
-    let kernel_source = if system_path.join("kernel").exists() {
-        system_path.join("kernel")
-    } else if system_path.join("bzImage").exists() {
-        system_path.join("bzImage")
-    } else if system_path.join("vmlinuz").exists() {
-        system_path.join("vmlinuz")
-    } else {
-        return Err(GarError::build(format!(
-            "Kernel não encontrado em {}",
-            system_path.display()
-        )));
-    };
-
-    fs::copy(&kernel_source, image_path.join("bzImage"))
-        .map_err(|e| GarError::publish(format!("falha ao copiar bzImage: {}", e)))?;
-    let _ = fs::copy(&kernel_source, image_path.join("vmlinuz"));
-
-    // Copy initrd
-    let initrd_source = if system_path.join("initrd").exists() {
-        system_path.join("initrd")
-    } else {
+    // Discover kernel/initrd/erofs/init paths inside the Nix store result.
+    let kernel_source = ["kernel", "bzImage", "vmlinuz"]
+        .iter()
+        .map(|n| system_path.join(n))
+        .find(|p| p.exists())
+        .ok_or_else(|| {
+            GarError::build(format!(
+                "Kernel não encontrado em {} (tentou: kernel, bzImage, vmlinuz)",
+                system_path.display()
+            ))
+        })?;
+    let initrd_source = system_path.join("initrd");
+    if !initrd_source.exists() {
         return Err(GarError::build(format!(
             "Initrd não encontrado em {}",
             system_path.display()
         )));
-    };
-    fs::copy(&initrd_source, image_path.join("initrd"))
-        .map_err(|e| GarError::publish(format!("falha ao copiar initrd: {}", e)))?;
-
-    // Copy optional EROFS image
-    if system_path.join("garos-root.erofs").exists() {
-        let _ = fs::copy(
-            system_path.join("garos-root.erofs"),
-            image_path.join("garos-root.erofs"),
-        );
     }
-
-    // Sidecars: .init_path and .kernel_params
     let init_path = if system_path.join("init").exists() {
-        system_path
-            .join("init")
-            .canonicalize()
-            .unwrap_or_else(|_| system_path.join("init"))
+        system_path.join("init")
     } else {
         system_path.clone()
     };
-    let _ = fs::write(
-        image_path.join(".init_path"),
-        init_path.display().to_string(),
-    );
-
-    let kernel_params = if system_path.join("kernel-params").exists() {
-        fs::read_to_string(system_path.join("kernel-params")).unwrap_or_default()
+    let init_path_for_display = init_path.display().to_string();
+    let kernel_params_path = system_path.join("kernel-params");
+    let kernel_params_str = if kernel_params_path.exists() {
+        fs::read_to_string(&kernel_params_path).unwrap_or_default()
     } else {
         String::new()
     };
-    let _ = fs::write(image_path.join(".kernel_params"), kernel_params.trim());
+
+    // Assemble BuildArtifact and delegate the rest to stage_generation
+    // (which handles copy + sha256 + manifest + Ed25519 sign + GC root).
+    let artifact = build::BuildArtifact {
+        build_id: build_id.clone(),
+        target: target.as_str().into(),
+        channel: channel.as_str().into(),
+        system_path: system_path.clone(),
+        init_path: init_path.clone(),
+        kernel_path: kernel_source,
+        initrd_path: initrd_source,
+        kernel_params: kernel_params_path.clone(),
+        kernel_sha256: String::new(), // populated inside stage_generation
+        initrd_sha256: String::new(),
+        timestamp: Utc::now().to_rfc3339(),
+    };
+
+    // Phase 2: Publish (delegate to existing stage_generation for full pipeline).
+    output::info("Publicando artefatos (stage_generation)...");
+    let _staged = build::stage_generation(
+        &cfg.images_root,
+        &build_id,
+        target.as_str(),
+        channel.as_str(),
+        &artifact,
+    )?;
+    let image_path = cfg.images_root.join(&build_id);
 
     // Copy netboot.ipxe or build-specific iPXE script if present
     let ipxe_source = [
@@ -212,8 +127,8 @@ pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Resul
              boot\n",
             cfg.server_ip,
             cfg.http_port,
-            init_path.display(),
-            kernel_params.trim(),
+            init_path_for_display,
+            kernel_params_str.trim(),
             cfg.server_ip,
             cfg.http_port
         );
@@ -375,6 +290,7 @@ mod tests {
         unsafe {
             std::env::set_var("GAR_TEST_SYSTEM_PATH", sys_tmp.display().to_string());
             std::env::set_var("GAR_IMAGES_ROOT", img_tmp.display().to_string());
+            std::env::set_var("GAR_KEYS_DIR", tmp.join("keys").display().to_string());
         }
 
         let result = run(Some(ImageTarget::DesktopGeneric), Some(Channel::Generic)).await;
@@ -382,6 +298,7 @@ mod tests {
         unsafe {
             std::env::remove_var("GAR_TEST_SYSTEM_PATH");
             std::env::remove_var("GAR_IMAGES_ROOT");
+            std::env::remove_var("GAR_KEYS_DIR");
         }
 
         assert!(result.is_ok(), "build run failed: {:?}", result);

@@ -102,10 +102,7 @@ pub async fn cmd_update(
     output::section("==> gar server update (Safe Update Flow)");
     output::info(format!("flake       : {}", flake_path.display()));
     output::info(format!("target_host : {}", cfg.target_host));
-    output::info(format!(
-        "services    : {}",
-        services.join(", ")
-    ));
+    output::info(format!("services    : {}", services.join(", ")));
     output::info(format!(
         "flags       : skip_disk_check={} skip_health_check={} dry_run={}",
         skip_disk_check, skip_health_check, dry_run
@@ -113,7 +110,13 @@ pub async fn cmd_update(
 
     if dry_run {
         output::warn("dry-run ativo: nenhuma operação será executada.");
-        return plan_only(&flake_path, &cfg, &services, skip_disk_check, skip_health_check);
+        return plan_only(
+            &flake_path,
+            &cfg,
+            &services,
+            skip_disk_check,
+            skip_health_check,
+        );
     }
 
     let lock_path = std::path::Path::new(UPDATE_LOCK_PATH);
@@ -259,9 +262,7 @@ fn resolve_flake_path(cfg: &Config) -> Result<std::path::PathBuf> {
 
 /// Ensure `/nix` has at least `min_mb` MiB of free space.
 fn check_free_nix_space(min_mb: u64) -> Result<()> {
-    let output = Command::new("df")
-        .args(["-B1M", "/nix"])
-        .output()?;
+    let output = Command::new("df").args(["-B1M", "/nix"]).output()?;
     if !output.status.success() {
         return Err(GarError::runtime_guard(format!(
             "df /nix falhou: {}",
@@ -270,9 +271,10 @@ fn check_free_nix_space(min_mb: u64) -> Result<()> {
     }
     // Header + one line. Example: "Filesystem 1M-blocks Used Available Use% Mounted on"
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let line = stdout.lines().nth(1).ok_or_else(|| {
-        GarError::runtime_guard("df /nix retornou saída inesperada".to_string())
-    })?;
+    let line = stdout
+        .lines()
+        .nth(1)
+        .ok_or_else(|| GarError::runtime_guard("df /nix retornou saída inesperada".to_string()))?;
     // 3rd whitespace-separated column = "Available"
     let free_mb: u64 = line
         .split_whitespace()
@@ -311,7 +313,9 @@ fn check_critical_services(services: &[String]) -> Result<u32> {
             continue;
         }
         let stdout = String::from_utf8_lossy(&present.stdout);
-        let listed = stdout.lines().any(|l| l.trim_start().starts_with(&format!("{svc}.service")));
+        let listed = stdout
+            .lines()
+            .any(|l| l.trim_start().starts_with(&format!("{svc}.service")));
         if !listed {
             output::info(format!(
                 "[skip] {svc}: unit file ausente neste sistema, no falha do update"
@@ -343,10 +347,7 @@ fn plan_only(
 ) -> Result<()> {
     let mut plan = String::new();
     plan.push_str("Plano de atualização (DRY-RUN, nada será executado):\n");
-    plan.push_str(&format!(
-        "  flake       : {}\n",
-        flake_path.display()
-    ));
+    plan.push_str(&format!("  flake       : {}\n", flake_path.display()));
     plan.push_str(&format!("  target_host : {}\n", cfg.target_host));
     plan.push_str(&format!("  services    : {}\n", services.join(", ")));
     plan.push_str("  etapas      :\n");
@@ -375,7 +376,13 @@ mod tests {
         // Order matters (stable logs).
         assert_eq!(
             DEFAULT_CRITICAL_SERVICES,
-            &["nginx", "dnsmasq", "nfs-server", "garos-control-api", "garos-control-web"]
+            &[
+                "nginx",
+                "dnsmasq",
+                "nfs-server",
+                "garos-control-api",
+                "garos-control-web"
+            ]
         );
     }
 
@@ -418,7 +425,8 @@ mod tests {
 
     #[test]
     fn resolve_flake_path_accepts_existing_dir() {
-        let tmp = std::env::temp_dir().join(format!("gar-resolve-{}-{}", std::process::id(), line!()));
+        let tmp =
+            std::env::temp_dir().join(format!("gar-resolve-{}-{}", std::process::id(), line!()));
         std::fs::create_dir_all(&tmp).unwrap();
         let mut cfg = Config::from_env().unwrap();
         cfg.flake_path = tmp.clone();

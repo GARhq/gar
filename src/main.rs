@@ -41,9 +41,7 @@ async fn main() -> Result<()> {
         Command::Client(cmd) => commands::client::dispatch(cmd).await,
         Command::Branding(cmd) => commands::branding::dispatch(cmd).await,
         Command::Secrets(cmd) => commands::secrets::dispatch(cmd).await,
-        Command::ProvisionHome(ref args) => {
-            commands::provision_home::run(args, cli.json)
-        }
+        Command::ProvisionHome(ref args) => commands::provision_home::run(args, cli.json),
         Command::GenerateCompletions { shell } => {
             let mut app = <crate::cli::Cli as clap::CommandFactory>::command();
             let bin_name = app.get_name().to_string();

@@ -1,0 +1,11 @@
+{
+    "schema_version": 2,
+    "commit": "99d08a5cbe7df611490d8c884867041c647cb583",
+    "indexed_at": "2026-10-03T14:46:50Z",
+    "project": "gar",
+    "nodes": 1313,
+    "edges": 5368,
+    "original_size": 3801088,
+    "compressed_size": 310211,
+    "compression_level": 9
+}
