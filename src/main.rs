@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
         Command::Branding(cmd) => commands::branding::dispatch(cmd).await,
         Command::Secrets(cmd) => commands::secrets::dispatch(cmd).await,
         Command::ProvisionHome(ref args) => {
-            commands::provision_home::run(args, cli.json).map_err(|e| e.into())
+            commands::provision_home::run(args, cli.json)
         }
         Command::GenerateCompletions { shell } => {
             let mut app = <crate::cli::Cli as clap::CommandFactory>::command();
@@ -60,6 +60,6 @@ async fn main() -> Result<()> {
 /// Process exit with proper exit code on error.
 pub fn exit_with(err: error::GarError) -> ! {
     let code = err.exit_code();
-    output::err(&err.to_string());
+    output::err(err.to_string());
     std::process::exit(code);
 }
