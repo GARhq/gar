@@ -180,7 +180,10 @@ pub async fn cmd_list() -> Result<()> {
                 },
                 quota_bytes: quota_b,
                 percent: if quota_b > 0 {
-                    format!("{}%", usage_b * 100 / quota_b)
+                    format!(
+                        "{}%",
+                        usage_b.checked_mul(100).map(|v| v / quota_b).unwrap_or(0)
+                    )
                 } else {
                     "—".into()
                 },
