@@ -62,7 +62,7 @@ pub async fn cmd_doctor(username: &str) -> Result<()> {
             qgroup,
         })?;
     } else {
-        output::section(&format!("Doctor para usuário '{}'", username));
+        output::section(format!("Doctor para usuário '{}'", username));
         println!("  home:        {}", home.display());
         println!("  filesystem:  {}", fstype);
         println!("  owner:       {}", owner);
@@ -118,7 +118,7 @@ pub async fn cmd_activity(username: &str) -> Result<()> {
         output::info(format!("sem sessões registradas para {}", username));
         return Ok(());
     }
-    output::section(&format!("Atividade de '{}'", username));
+    output::section(format!("Atividade de '{}'", username));
     for s in &sessions {
         println!(
             "  [{}] [{}] tty={} ip={}",

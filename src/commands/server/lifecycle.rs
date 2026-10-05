@@ -100,13 +100,13 @@ pub async fn cmd_update(
     };
 
     output::section("==> gar server update (Safe Update Flow)");
-    output::info(&format!("flake       : {}", flake_path.display()));
-    output::info(&format!("target_host : {}", cfg.target_host));
-    output::info(&format!(
+    output::info(format!("flake       : {}", flake_path.display()));
+    output::info(format!("target_host : {}", cfg.target_host));
+    output::info(format!(
         "services    : {}",
         services.join(", ")
     ));
-    output::info(&format!(
+    output::info(format!(
         "flags       : skip_disk_check={} skip_health_check={} dry_run={}",
         skip_disk_check, skip_health_check, dry_run
     ));
@@ -151,7 +151,7 @@ pub async fn cmd_update(
                 std::thread::sleep(Duration::from_secs(3));
                 let fails = check_critical_services(&services)?;
                 if fails > 0 {
-                    output::warn(&format!(
+                    output::warn(format!(
                         "[CRÍTICO] {fails} serviço(s) crítico(s) falhou(aram). Executando rollback..."
                     ));
                     let _ = Command::new("nixos-rebuild")
@@ -243,7 +243,7 @@ fn resolve_flake_path(cfg: &Config) -> Result<std::path::PathBuf> {
     }
     let cwd = std::env::current_dir()?;
     if cwd.join("flake.nix").is_file() {
-        output::warn(&format!(
+        output::warn(format!(
             "flake ausente em {}; usando cwd {}",
             cfg.flake_path.display(),
             cwd.display()
@@ -286,7 +286,7 @@ fn check_free_nix_space(min_mb: u64) -> Result<()> {
              Execute 'gar server clean' para liberar espaço."
         )));
     }
-    output::info(&format!(
+    output::info(format!(
         "[OK] Espaço livre em /nix: {free_mb}MB (mínimo {min_mb}MB)"
     ));
     Ok(())
@@ -305,7 +305,7 @@ fn check_critical_services(services: &[String]) -> Result<u32> {
             .args(["list-unit-files", &format!("{svc}.service")])
             .output()?;
         if !present.status.success() {
-            output::info(&format!(
+            output::info(format!(
                 "[skip] {svc}: unit file ausente neste sistema, no falha do update"
             ));
             continue;
@@ -313,7 +313,7 @@ fn check_critical_services(services: &[String]) -> Result<u32> {
         let stdout = String::from_utf8_lossy(&present.stdout);
         let listed = stdout.lines().any(|l| l.trim_start().starts_with(&format!("{svc}.service")));
         if !listed {
-            output::info(&format!(
+            output::info(format!(
                 "[skip] {svc}: unit file ausente neste sistema, no falha do update"
             ));
             continue;
@@ -322,12 +322,12 @@ fn check_critical_services(services: &[String]) -> Result<u32> {
             .args(["is-active", "--quiet", svc])
             .status()?;
         if !active.success() {
-            output::warn(&format!(
+            output::warn(format!(
                 "[ERRO] Serviço {svc} falhou ou está inativo após atualização!"
             ));
             fails += 1;
         } else {
-            output::info(&format!("[OK] {svc} ativo"));
+            output::info(format!("[OK] {svc} ativo"));
         }
     }
     Ok(fails)

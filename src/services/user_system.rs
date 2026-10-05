@@ -112,7 +112,7 @@ pub fn qgroup_info(path: &Path) -> Option<String> {
 
 pub fn mount_info(path: &Path) -> Option<String> {
     let s = cmd_stdout("findmnt", &["--target", &path.display().to_string()])?;
-    (!s.trim().is_empty()).then(|| s)
+    (!s.trim().is_empty()).then_some(s)
 }
 
 fn cmd_ok(prog: &str, args: &[&str]) -> bool {

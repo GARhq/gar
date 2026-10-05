@@ -77,7 +77,7 @@ pub async fn cmd_permissions(name: &str) -> Result<()> {
             extras: perms.extra,
         })?;
     } else {
-        output::section(&format!("Permissões do grupo '{}'", name));
+        output::section(format!("Permissões do grupo '{}'", name));
         println!("  setor: {}", sector.display());
         println!("  modo:  {}", perms.mode);
         println!("  membros:");

@@ -216,7 +216,7 @@ fn apply_btrfs_quota(path: &Path, quota_gb: u64) -> Result<(), GarError> {
 /// Ajusta ownership da home.
 fn chown_home(user: &str, path: &Path) -> Result<(), GarError> {
     let status = SysCommand::new("chown")
-        .arg(&format!("{user}:users"))
+        .arg(format!("{user}:users"))
         .arg(path)
         .status()
         .map_err(|e| GarError::validation(format!("Falha ao chown: {e}")))?;
