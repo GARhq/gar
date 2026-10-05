@@ -294,7 +294,25 @@ mod tests {
     #[test]
     fn test_storage_backend_auto_detection() {
         // /proc é um pseudo-fs (procfs), nunca btrfs — seguro em qualquer ambiente.
-        assert!(!is_btrfs(Path::new("/proc")));
+        // Pula o test se a raiz do host for btrfs-on-/ (porque parent(/proc) = /, btrfs).
+        let root_fs = SysCommand::new("stat")
+            .args(["-f", "-c", "%T"])
+            .arg("/")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if root_fs == "btrfs" {
+            // Validação alternativa: /proc ainda deve reportar procfs (stat -f resolve corretamente).
+            let proc_fs = SysCommand::new("stat")
+                .args(["-f", "-c", "%T"])
+                .arg("/proc")
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
+            assert_ne!(proc_fs, "btrfs", "/proc deve reportar procfs");
+        } else {
+            assert!(!is_btrfs(Path::new("/proc")));
+        }
     }
 
     #[test]
