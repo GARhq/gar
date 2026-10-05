@@ -38,7 +38,7 @@ pub async fn run(keep: Option<u32>) -> Result<()> {
         return Err(GarError::gc("keep=0 inválido"));
     }
 
-    let snapshots_root = format!("/srv/data/snapshots");
+    let snapshots_root = "/srv/data/snapshots".to_string();
     let snapshot_keep = cfg.gc_snapshot_keep;
     let grace_seconds = cfg.gc_grace_seconds;
 
@@ -72,7 +72,7 @@ pub async fn run(keep: Option<u32>) -> Result<()> {
             .unwrap_or(SystemTime::UNIX_EPOCH);
         ranked.push((mtime, path));
     }
-    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+    ranked.sort_by_key(|r| std::cmp::Reverse(r.0));
 
     let now = SystemTime::now();
 
