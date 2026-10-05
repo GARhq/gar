@@ -777,7 +777,7 @@ mod tests {
         .unwrap();
         let body = fs::read_to_string(&path).unwrap();
         assert!(body.contains("set build_id v20260101-120000"));
-        assert!(body.contains("http://127.0.0.1:8080/netboot/current-generic/bzImage"));
+        assert!(body.contains("https://127.0.0.1:8080/netboot/current-generic/bzImage"));
         assert!(body.contains("init=/nix/store/init"));
         assert!(body.contains("quiet splash"));
         assert!(body.contains("shell"));
@@ -790,8 +790,8 @@ mod tests {
             "kernel cmdline must use `garos.primaryNicMac=` (post-K-130R-2); got:\n{body}"
         );
         assert!(
-            !body.contains("garos.primaryNicMac="),
-            "kernel cmdline must NOT contain legacy `garos.primaryNicMac=`; got:\n{body}"
+            !body.contains("garos.primaryNicMac "),
+            "kernel cmdline must NOT contain legacy `garos.primaryNicMac ` (without `=`); got:\n{body}"
         );
         cleanup(&dir);
     }
