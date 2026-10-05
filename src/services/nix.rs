@@ -12,9 +12,18 @@ pub async fn flake_update(flake_dir: &Path) -> Result<()> {
 }
 
 /// Run `nix flake check` in the given directory.
+///
+/// K-2605: use `--no-build` so the check only evaluates the flake structure
+/// (all nixosConfigurations + packages metadata) without materialising the
+/// garos-iso-offline ISO derivation, which can take 15-30 min and is
+/// already verified separately by the ISO build pipeline.
 pub async fn flake_check(flake_dir: &Path) -> Result<()> {
-    let _ =
-        crate::services::shell::run_success_in_dir(flake_dir, "nix", &["flake", "check", "--impure"]).await?;
+    let _ = crate::services::shell::run_success_in_dir(
+        flake_dir,
+        "nix",
+        &["flake", "check", "--impure", "--no-build"],
+    )
+    .await?;
     Ok(())
 }
 
@@ -69,7 +78,7 @@ builtins.toJSON (
     );
 
     let output = tokio::process::Command::new("nix-instantiate")
-        .args(&["--eval", "--strict", "--raw", "--expr", &expr])
+        .args(["--eval", "--strict", "--raw", "--expr", &expr])
         .output()
         .await
         .map_err(|e| crate::error::GarError::CommandNotFound(format!("nix-instantiate: {}", e)))?;
