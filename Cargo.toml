@@ -41,6 +41,12 @@ tabled = "0.14"
 # Colors
 owo-colors = "4.2"
 
+# Progress bars
+indicatif = "0.17"
+
+# CLI completion generation
+clap_complete = "4.5"
+
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 

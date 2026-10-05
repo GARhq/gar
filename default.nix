@@ -21,6 +21,7 @@
 , curl
 , systemd
 , makeWrapper
+, installShellFiles
 }:
 
 rustPlatform.buildRustPackage {
@@ -33,7 +34,7 @@ rustPlatform.buildRustPackage {
     lockFile = ./Cargo.lock;
   };
 
-  nativeBuildInputs = [ pkg-config makeWrapper ];
+  nativeBuildInputs = [ pkg-config makeWrapper installShellFiles ];
 
   buildInputs = [ openssl ];
 
@@ -54,5 +55,11 @@ rustPlatform.buildRustPackage {
         nix btrfs-progs findutils coreutils gawk gnugrep gnused
         jq util-linux shadow nfs-utils iproute2 curl systemd
       ]}
+
+    # Generate shell completions
+    installShellCompletion --cmd gar \
+      --bash <($out/bin/gar generate-completions bash) \
+      --zsh <($out/bin/gar generate-completions zsh) \
+      --fish <($out/bin/gar generate-completions fish)
   '';
 }

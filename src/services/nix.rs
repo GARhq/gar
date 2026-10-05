@@ -14,7 +14,7 @@ pub async fn flake_update(flake_dir: &Path) -> Result<()> {
 /// Run `nix flake check` in the given directory.
 pub async fn flake_check(flake_dir: &Path) -> Result<()> {
     let _ =
-        crate::services::shell::run_success_in_dir(flake_dir, "nix", &["flake", "check"]).await?;
+        crate::services::shell::run_success_in_dir(flake_dir, "nix", &["flake", "check", "--impure"]).await?;
     Ok(())
 }
 

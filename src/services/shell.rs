@@ -11,11 +11,29 @@ use crate::error::{GarError, Result};
 
 /// Run a command and fail if exit code != 0.
 pub async fn run_success(program: &str, args: &[&str]) -> Result<String> {
+    use indicatif::{ProgressBar, ProgressStyle};
+    use std::time::Duration;
+
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "✓"])
+            .template("{spinner:.green} {msg}")
+            .unwrap(),
+    );
+    spinner.set_message(format!("Rodando {}...", program));
+    spinner.enable_steady_tick(Duration::from_millis(100));
+
     let output = Command::new(program)
         .args(args)
         .output()
         .await
-        .map_err(|e| GarError::CommandNotFound(format!("{}: {}", program, e)))?;
+        .map_err(|e| {
+            spinner.finish_and_clear();
+            GarError::CommandNotFound(format!("{}: {}", program, e))
+        })?;
+
+    spinner.finish_and_clear();
 
     if !output.status.success() {
         return Err(GarError::CommandFailed {
@@ -35,12 +53,30 @@ pub async fn run_success(program: &str, args: &[&str]) -> Result<String> {
 
 /// Run a command in a specific working directory.
 pub async fn run_success_in_dir(dir: &Path, program: &str, args: &[&str]) -> Result<String> {
+    use indicatif::{ProgressBar, ProgressStyle};
+    use std::time::Duration;
+
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "✓"])
+            .template("{spinner:.green} {msg}")
+            .unwrap(),
+    );
+    spinner.set_message(format!("Rodando {}...", program));
+    spinner.enable_steady_tick(Duration::from_millis(100));
+
     let output = Command::new(program)
         .args(args)
         .current_dir(dir)
         .output()
         .await
-        .map_err(|e| GarError::CommandNotFound(format!("{}: {}", program, e)))?;
+        .map_err(|e| {
+            spinner.finish_and_clear();
+            GarError::CommandNotFound(format!("{}: {}", program, e))
+        })?;
+
+    spinner.finish_and_clear();
 
     if !output.status.success() {
         return Err(GarError::CommandFailed {

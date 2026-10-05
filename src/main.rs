@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
         .init();
 
     // Dispatch
-    match cli.command {
+    let result = match cli.command {
         Command::Image(cmd) => commands::image::dispatch(cmd).await,
         Command::Server(cmd) => commands::server::dispatch(cmd).await,
         Command::User(cmd) => commands::user::dispatch(cmd).await,
@@ -44,7 +44,17 @@ async fn main() -> Result<()> {
         Command::ProvisionHome(ref args) => {
             commands::provision_home::run(args, cli.json).map_err(|e| e.into())
         }
+        Command::GenerateCompletions { shell } => {
+            let mut app = <crate::cli::Cli as clap::CommandFactory>::command();
+            let bin_name = app.get_name().to_string();
+            clap_complete::generate(shell, &mut app, bin_name, &mut std::io::stdout());
+            Ok(())
+        }
+    };
+    if let Err(e) = result {
+        exit_with(e);
     }
+    Ok(())
 }
 
 /// Process exit with proper exit code on error.
