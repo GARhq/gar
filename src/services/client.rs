@@ -143,7 +143,7 @@ impl ClientStatus {
     /// other crates (or future ingestion helpers) can reuse the same
     /// normalization without re-implementing the vocabulary.
     #[allow(dead_code)] // exposed for future inventory parsers; not yet wired into a path
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         match s.to_ascii_lowercase().as_str() {
             "online" | "up" | "alive" => Self::Online,
             "offline" | "down" | "dead" => Self::Offline,

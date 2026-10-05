@@ -21,7 +21,7 @@ pub enum FsType {
 }
 
 impl FsType {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "btrfs" => Self::Btrfs,
             "xfs" => Self::Xfs,
@@ -67,7 +67,7 @@ pub fn detect(path: &Path) -> FsType {
     ) else {
         return FsType::Unknown;
     };
-    FsType::from_str(s.trim())
+    FsType::parse_str(s.trim())
 }
 
 pub fn is_btrfs(path: &Path) -> bool {
@@ -326,12 +326,12 @@ mod tests {
 
     #[test]
     fn test_fs_type_parsing() {
-        assert_eq!(FsType::from_str("btrfs"), FsType::Btrfs);
-        assert_eq!(FsType::from_str("BTRFS"), FsType::Btrfs);
-        assert_eq!(FsType::from_str("xfs"), FsType::Xfs);
-        assert_eq!(FsType::from_str("zfs"), FsType::Zfs);
-        assert_eq!(FsType::from_str("ext4"), FsType::Ext4);
-        assert_eq!(FsType::from_str("ntfs"), FsType::Unknown);
+        assert_eq!(FsType::parse_str("btrfs"), FsType::Btrfs);
+        assert_eq!(FsType::parse_str("BTRFS"), FsType::Btrfs);
+        assert_eq!(FsType::parse_str("xfs"), FsType::Xfs);
+        assert_eq!(FsType::parse_str("zfs"), FsType::Zfs);
+        assert_eq!(FsType::parse_str("ext4"), FsType::Ext4);
+        assert_eq!(FsType::parse_str("ntfs"), FsType::Unknown);
     }
 
     #[test]
