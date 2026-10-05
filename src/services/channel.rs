@@ -133,7 +133,6 @@ pub fn channel_staged_pointer(channel: Channel) -> &'static str {
 /// - Canonicalizes the symlink target via `std::fs::canonicalize` (the
 ///   Rust equivalent of `readlink -f`)
 /// - Delegated manifest parsing is typed, not grep'd
-#[must_use]
 #[tracing::instrument(skip_all)]
 pub fn active_channel_from_current(images_root: &Path) -> Result<Option<String>> {
     let current_link = images_root.join("current");
@@ -222,16 +221,14 @@ pub const DEFAULT_CLIENT_TARGET: &str = "desktop-generic";
 /// - `Result` for error handling (was bash `die`)
 /// - Validates `Some("")` as "use default" (matching bash
 ///   `${1:-}` behavior) by passing `None` for `requested`
-#[must_use]
 #[tracing::instrument(skip_all)]
 pub fn resolve_client_target(
     requested: Option<&str>,
     default_target: &str,
 ) -> Result<(String, Option<String>)> {
     let raw = match requested {
-        None => default_target,
-        Some(s) if s.is_empty() => default_target,
-        Some(s) => s,
+        Some(s) if !s.is_empty() => s,
+        _ => default_target,
     };
     match raw {
         "desktop-generic" | "generic" => Ok(("desktop-generic".into(), None)),
@@ -274,7 +271,6 @@ pub fn resolve_client_target(
 ///   `[[ "$flake_ref" != *:* ]]`.
 /// - Resolves legacy aliases via `resolve_client_target` (so callers
 ///   can pass `"physical-generic"` or `"rescue"` and get the right tree).
-#[must_use]
 #[tracing::instrument(skip_all)]
 pub fn target_installable(flake_root: &Path, requested_target: Option<&str>) -> Result<String> {
     let (resolved, warning) = resolve_client_target(requested_target, DEFAULT_CLIENT_TARGET)?;
