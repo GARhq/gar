@@ -16,6 +16,7 @@ use crate::error::{GarError, Result};
 use crate::output;
 use crate::services::build;
 use crate::services::manifest;
+use crate::services::rollback;
 
 /// Result of a successful image build, returned by `run()`.
 #[derive(Debug, Serialize)]
@@ -193,6 +194,30 @@ pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Resul
     output::info("Promovendo...");
     let current_link = cfg.images_root.join("current");
 
+    // Capture previous build id BEFORE we swap, for auto-rollback.
+    let previous_build_id: Option<String> = fs::read_link(&current_link)
+        .ok()
+        .and_then(|t| t.file_name().map(|n| n.to_string_lossy().into_owned()));
+
+    // Mark a pending rollback record so a subsequent health-check failure can
+    // roll back without remembering the previous state manually. Matches
+    // bash `write_pending_rollback` (publish.sh:390-402).
+    if let Some(ref prev) = previous_build_id {
+        if prev.as_str() != build_id {
+            let pending_path = cfg.images_root.join(".rollback-pending");
+            if let Err(e) = rollback::write_pending_rollback(
+                &pending_path,
+                prev,
+                &build_id,
+                Some(channel.as_str()),
+            ) {
+                output::warn(format!(
+                    "falha ao escrever .rollback-pending (continuando): {e}"
+                ));
+            }
+        }
+    }
+
     // Clean up if current is a directory (not a symlink)
     if current_link.is_dir() && !current_link.is_symlink() {
         output::warn("Destino 'current' é um diretório real; removendo para permitir symlink...");
@@ -230,6 +255,10 @@ pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Resul
     if symlink(&build_id, &channel_tmp).is_ok() {
         let _ = fs::rename(&channel_tmp, cfg.images_root.join(&channel_ptr_name));
     }
+
+    // Phase 4 (auto-rollback bookkeeping): pending marker stays in place so
+    // a later `gar image rollback --auto` can detect a broken publish.
+    // Operators can clear it explicitly with `gar image rollback --clear-pending`.
 
     // Phase 4: Render URLs
     let result = BuildResult {
