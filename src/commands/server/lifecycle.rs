@@ -82,6 +82,7 @@ pub async fn cmd_update(
     services: Vec<String>,
     skip_disk_check: bool,
     skip_health_check: bool,
+    skip_flake_check: bool,
     dry_run: bool,
 ) -> Result<()> {
     let cfg = Config::from_env()?;
@@ -145,10 +146,29 @@ pub async fn cmd_update(
                 )))?,
             }
 
-            // 2) flake check (K-2605: --no-build for fast eval)
+            // 2) flake check (K-2605 + K-2026-10-05):
+            //    - --no-build for fast eval (skip materialising ISO/clients)
+            //    - check ONLY the target host system, not the entire flake.
+            //      Validating garos-iso-offline + 7 client profiles during a
+            //      server update is wasteful (they have their own release
+            //      pipeline: `gar image build` and CI iso checks).
+            //      Use the syntax `.<system_attr>@toplevel` which restricts
+            //      nix flake check to that single attribute.
+            if skip_flake_check {
+                output::info("[2/6] Validação de flake pulada (--skip-flake-check).");
+            } else {
             output::info("[2/6] Validando flake (nix flake check)...");
+            let system_attr = format!("nixosConfigurations.{}", cfg.target_host);
+            let flake_ref = format!(".#{}@toplevel", system_attr);
             let status = Command::new("nix")
-                .args(["flake", "check", "--impure", "--no-build"])
+                .args([
+                    "flake",
+                    "check",
+                    "--impure",
+                    "--no-build",
+                    "--no-allow-import-from-derivation",
+                    &flake_ref,
+                ])
                 .current_dir(&flake_path)
                 .status();
             match status {
@@ -161,6 +181,7 @@ pub async fn cmd_update(
                     "nix flake check: {e}"
                 )))?,
             }
+            } // end else skip_flake_check
 
             // 3) disk precheck
             if !skip_disk_check {
