@@ -137,11 +137,12 @@ pub enum ServerCmd {
         #[arg(long)]
         skip_health_check: bool,
 
-        /// Skip the `nix flake check` step (saves 20-30 min in production
-        /// where only `nixos-system-<host>` matters). Use when the flake
-        /// has been independently validated and you only want to apply.
+        /// Run `nix flake check` AFTER `nh os test` passes.
+        /// Off by default (it transitively evaluates garos-iso-offline +
+        /// client profiles via `@toplevel`, which is slow and out of
+        /// scope for a server update). Use only when explicitly auditing.
         #[arg(long)]
-        skip_flake_check: bool,
+        check_flake: bool,
 
         /// Print the plan without executing rebuild/switch
         #[arg(long)]

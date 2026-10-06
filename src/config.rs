@@ -68,8 +68,8 @@ impl Config {
             http_port: env_u16("GAR_HTTP_PORT", 8080)?,
 
             // Runtime
-            runtime_root: env_path("GAR_RUNTIME_ROOT", "/var/lib/gar/runtime")?,
-            audit_dir: env_path("GAR_AUDIT_DIR", "/var/lib/gar/audit")?,
+            runtime_root: env_path("GAR_RUNTIME_ROOT", "/var/lib/garos/runtime")?,
+            audit_dir: env_path("GAR_AUDIT_DIR", "/var/lib/garos/audit")?,
 
             // Storage
             home_base: env_path("GAR_HOME_BASE", "/srv/data/home")?,
@@ -79,7 +79,7 @@ impl Config {
             storage_archive: env_path("GAR_STORAGE_ARCHIVE", "/srv/data/storage/.archive")?,
 
             // Lock
-            lock_path: env_path("GAR_LOCK_PATH", "/var/lib/gar/installer.lock")?,
+            lock_path: env_path("GAR_LOCK_PATH", "/var/lib/garos/installer.lock")?,
 
             // GC
             keep_versions: env_u32("GAR_KEEP_VERSIONS", 5)?,

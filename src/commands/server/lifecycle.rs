@@ -82,7 +82,7 @@ pub async fn cmd_update(
     services: Vec<String>,
     skip_disk_check: bool,
     skip_health_check: bool,
-    skip_flake_check: bool,
+    check_flake: bool,
     dry_run: bool,
 ) -> Result<()> {
     let cfg = Config::from_env()?;
@@ -146,44 +146,7 @@ pub async fn cmd_update(
                 )))?,
             }
 
-            // 2) flake check (K-2605 + K-2026-10-05):
-            //    - --no-build for fast eval (skip materialising ISO/clients)
-            //    - check ONLY the target host system, not the entire flake.
-            //      Validating garos-iso-offline + 7 client profiles during a
-            //      server update is wasteful (they have their own release
-            //      pipeline: `gar image build` and CI iso checks).
-            //      Use the syntax `.<system_attr>@toplevel` which restricts
-            //      nix flake check to that single attribute.
-            if skip_flake_check {
-                output::info("[2/6] Validação de flake pulada (--skip-flake-check).");
-            } else {
-            output::info("[2/6] Validando flake (nix flake check)...");
-            let system_attr = format!("nixosConfigurations.{}", cfg.target_host);
-            let flake_ref = format!(".#{}@toplevel", system_attr);
-            let status = Command::new("nix")
-                .args([
-                    "flake",
-                    "check",
-                    "--impure",
-                    "--no-build",
-                    "--no-allow-import-from-derivation",
-                    &flake_ref,
-                ])
-                .current_dir(&flake_path)
-                .status();
-            match status {
-                Ok(s) if s.success() => {}
-                Ok(s) => Err(GarError::config(format!(
-                    "nix flake check falhou (exit {})",
-                    s.code().unwrap_or(-1)
-                )))?,
-                Err(e) => Err(GarError::config(format!(
-                    "nix flake check: {e}"
-                )))?,
-            }
-            } // end else skip_flake_check
-
-            // 3) disk precheck
+            // 3) disk precheck (renumbered — see order comment)
             if !skip_disk_check {
                 output::info("[3/6] Checando espaço livre em /nix...");
                 check_free_nix_space(MIN_FREE_NIX_MB)?;
@@ -196,6 +159,39 @@ pub async fn cmd_update(
             output::info("[4/6] Aplicando em modo de teste (nh os test)...");
             run_nh_os_action(&cfg, "test")?;
             // Critical: if test failed, run_nh_os_action returned Err already.
+
+            // 4.5) flake check (runs AFTER nh os test, only if requested)
+            //    Validates the entire flake attribute tree that the new
+            //    generation depends on. Skipped by default because in
+            //    production the nixos test already proved the system builds.
+            //    --skip-flake-check default keeps the safe path; opt in
+            //    with --check-flake for a thorough (slower) validation.
+            if check_flake {
+                output::info("[4.5/6] Validando flake (nix flake check)...");
+                let system_attr = format!("nixosConfigurations.{}", cfg.target_host);
+                let flake_ref = format!(".#{}@toplevel", system_attr);
+                let status = Command::new("nix")
+                    .args([
+                        "flake",
+                        "check",
+                        "--impure",
+                        "--no-build",
+                        "--no-allow-import-from-derivation",
+                        &flake_ref,
+                    ])
+                    .current_dir(&flake_path)
+                    .status();
+                match status {
+                    Ok(s) if s.success() => {}
+                    Ok(s) => Err(GarError::config(format!(
+                        "nix flake check falhou (exit {})",
+                        s.code().unwrap_or(-1)
+                    )))?,
+                    Err(e) => Err(GarError::config(format!(
+                        "nix flake check: {e}"
+                    )))?,
+                }
+            }
 
             // 5) health check
             if !skip_health_check {

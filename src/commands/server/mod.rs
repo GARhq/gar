@@ -21,9 +21,9 @@ pub async fn dispatch(cmd: ServerCmd) -> Result<()> {
             services,
             skip_disk_check,
             skip_health_check,
-            skip_flake_check,
+            check_flake,
             dry_run,
-        } => lifecycle::cmd_update(services, skip_disk_check, skip_health_check, skip_flake_check, dry_run).await,
+        } => lifecycle::cmd_update(services, skip_disk_check, skip_health_check, check_flake, dry_run).await,
         ServerCmd::Clean => lifecycle::cmd_clean().await,
         ServerCmd::Check {
             inventory,
