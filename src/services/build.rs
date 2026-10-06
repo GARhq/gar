@@ -62,12 +62,14 @@ pub fn build_or_reuse_system(flake_root: &Path, target: &str, channel: &str) -> 
     // `nixosConfigurations.garos-client-<profile>` (canonical since rebrand).
     // The `garos-client-*` attribute was the legacy name and no longer exists.
     let installable = format!(
-        "path:{flake}#nixosConfigurations.garos-client-{target}.config.system.build.toplevel",
+        "git+file://{flake}#nixosConfigurations.garos-client-{target}.config.system.build.toplevel",
         flake = flake_root.display(),
         target = target
     );
 
     // `nix build --print-out-paths --no-link` returns just the path on stdout.
+    // We stream stderr to the terminal so the user can see build progress,
+    // and capture stdout to get the built path.
     let output = Command::new("nix")
         .args([
             "build",
@@ -76,14 +78,15 @@ pub fn build_or_reuse_system(flake_root: &Path, target: &str, channel: &str) -> 
             "--no-link",
             &installable,
         ])
+        .stderr(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::piped())
         .output()
         .map_err(|e| GarError::build(format!("failed to spawn nix build: {}", e)))?;
 
     if !output.status.success() {
         return Err(GarError::build(format!(
-            "nix build falhou (exit {}): {}",
-            output.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&output.stderr)
+            "nix build falhou (exit {})",
+            output.status.code().unwrap_or(-1)
         )));
     }
 
