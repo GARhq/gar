@@ -259,6 +259,10 @@ pub async fn cmd_clean() -> Result<()> {
 }
 
 /// Run nh os with the appropriate flags.
+///
+/// K-2026-10-05: \`nh os\` refuses to run as root. We invoke it through
+/// \`sudo -u gabriel-rocha\` which mirrors the original scheme (nh
+/// internally escalates back to root for activation).
 pub fn run_nh_os(cfg: &Config, action: &str) -> Result<()> {
     run_nh_os_action(cfg, action)
 }
@@ -266,7 +270,9 @@ pub fn run_nh_os(cfg: &Config, action: &str) -> Result<()> {
 /// Internal: actually run `nh os <action>`. Kept separate so we can swap
 /// `nh` for `nixos-rebuild` in tests if needed in the future.
 fn run_nh_os_action(cfg: &Config, action: &str) -> Result<()> {
-    let mut cmd = Command::new("nh");
+    // nh refuses root. Drop to the operator user; nh internally re-escalates.
+    let mut cmd = Command::new("sudo");
+    cmd.args(["-u", "gabriel-rocha", "--", "nh"]);
     cmd.env("GAR_ENFORCE_RUNTIME_GUARDS", "1");
     cmd.arg("os");
     cmd.arg(action);
