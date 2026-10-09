@@ -68,13 +68,19 @@ pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Resul
             system_path.display()
         )));
     }
-    let init_path = if system_path.join("init").exists() {
+    let init_path = if system_path.join("toplevel/init").exists() {
+        system_path.join("toplevel/init")
+    } else if system_path.join("init").exists() {
         system_path.join("init")
     } else {
         system_path.clone()
     };
     let init_path_for_display = init_path.display().to_string();
-    let kernel_params_path = system_path.join("kernel-params");
+    let kernel_params_path = if system_path.join("toplevel/kernel-params").exists() {
+        system_path.join("toplevel/kernel-params")
+    } else {
+        system_path.join("kernel-params")
+    };
     let kernel_params_str = if kernel_params_path.exists() {
         fs::read_to_string(&kernel_params_path).unwrap_or_default()
     } else {

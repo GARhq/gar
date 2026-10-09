@@ -62,7 +62,7 @@ pub fn build_or_reuse_system(flake_root: &Path, target: &str, channel: &str) -> 
     // `nixosConfigurations.garos-client-<profile>` (canonical since rebrand).
     // The `garos-client-*` attribute was the legacy name and no longer exists.
     let installable = format!(
-        "git+file://{flake}#nixosConfigurations.garos-client-{target}.config.system.build.toplevel",
+        "git+file://{flake}#nixosConfigurations.garos-client-{target}.config.system.build.garosPublishTree",
         flake = flake_root.display(),
         target = target
     );
@@ -250,16 +250,43 @@ pub fn stage_generation(
     }
     std::fs::create_dir_all(&generation_dir)?;
 
-    // Copy kernel -> bzImage, initrd -> initrd (with dereferencing).
-    std::fs::copy(&artifact.kernel_path, generation_dir.join("bzImage"))?;
-    std::fs::copy(&artifact.initrd_path, generation_dir.join("initrd"))?;
+    // Copy kernel -> bzImage, initrd -> initrd (with dereferencing to avoid tmpfs OOM in fs::copy).
+    let status = Command::new("cp")
+        .arg("-L")
+        .arg(&artifact.kernel_path)
+        .arg(generation_dir.join("bzImage"))
+        .status()?;
+    if !status.success() {
+        return Err(GarError::publish("falha ao copiar bzImage"));
+    }
 
-    // Copy EROFS root image (injected into toplevel by garos-dev)
-    if artifact.system_path.join("garos-root.erofs").exists() {
-        std::fs::copy(
-            artifact.system_path.join("garos-root.erofs"),
-            generation_dir.join("garos-root.erofs"),
-        )?;
+    let status = Command::new("cp")
+        .arg("-L")
+        .arg(&artifact.initrd_path)
+        .arg(generation_dir.join("initrd"))
+        .status()?;
+    if !status.success() {
+        return Err(GarError::publish("falha ao copiar initrd"));
+    }
+
+    // Copy EROFS root image (from garosPublishTree or legacy toplevel)
+    let erofs_src = if artifact.system_path.join("erofs").exists() {
+        Some(artifact.system_path.join("erofs"))
+    } else if artifact.system_path.join("garos-root.erofs").exists() {
+        Some(artifact.system_path.join("garos-root.erofs"))
+    } else {
+        None
+    };
+
+    if let Some(src) = erofs_src {
+        let status = Command::new("cp")
+            .arg("-L")
+            .arg(&src)
+            .arg(generation_dir.join("garos-root.erofs"))
+            .status()?;
+        if !status.success() {
+            return Err(GarError::publish("falha ao copiar garos-root.erofs"));
+        }
     }
 
     // Write .init_path and .kernel_params sidecars.
