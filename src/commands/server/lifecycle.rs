@@ -477,6 +477,7 @@ fn run_collect_garbage() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn default_services_include_all_critical() {
@@ -531,6 +532,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(env_config)]
     fn resolve_flake_path_accepts_existing_dir() {
         let tmp =
             std::env::temp_dir().join(format!("gar-resolve-{}-{}", std::process::id(), line!()));

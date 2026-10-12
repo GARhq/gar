@@ -390,6 +390,7 @@ pub fn stage_generation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_build_id_format_v_date() {
@@ -447,6 +448,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(env_config)]
     fn test_build_or_reuse_system_honors_test_env() {
         let tmp = std::env::temp_dir().join(format!("gar-build-mock-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
@@ -465,6 +467,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(env_config)]
     fn test_build_or_reuse_system_skip_env_returns_error() {
         // SAFETY: single-threaded test
         unsafe {

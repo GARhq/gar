@@ -23,6 +23,17 @@ fn locate_keys_dir() -> std::path::PathBuf {
     std::path::PathBuf::from("/var/lib/garos/keys")
 }
 
+/// Short hex prefix for diagnostics (12 chars of sha256-style hash).
+/// K-2026-10-12: used by the key-match gate to show the operator which
+/// of the two divergent keys is which, without leaking the full key.
+fn short_hex(bytes: &[u8]) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    bytes.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
 /// All artifacts + checksums must be present and correct.
 /// Returns Ok(()) if the build is good to ship, Err otherwise.
 pub fn validate_build_artifacts(image_path: &Path) -> Result<()> {
@@ -97,6 +108,43 @@ pub fn validate_build_artifacts(image_path: &Path) -> Result<()> {
         GarError::validation(format!("[--validate] assinatura Ed25519 inválida: {e}"))
     })?;
 
+    // ── 5b. Public key in runtime must match the pinned key in the flake. ──
+    // K-2026-10-12: a sign failure is half the story — the OTHER half is
+    // "the operator rotated the runtime key but forgot to commit the new
+    // pub to GAROS/client/storage/garos.pub". Without this gate, the new
+    // key signs manifests that every existing client will reject at boot.
+    // The flake path is resolved via `find_flake_root` walking up from the
+    // images_root so we don't require a hard-coded /etc/garos.
+    let pinned = match crate::services::manifest::find_flake_root(
+        image_path,
+        None,
+    ) {
+        Some(root) => root.join("client/storage/garos.pub"),
+        None => image_path.join("garos.pub.pinned"), // sentinel that won't exist → fail
+    };
+    match (std::fs::read(&pinned), std::fs::read(keys_dir.join("garos.pub"))) {
+        (Ok(p), Ok(r)) if p == r => {}
+        (Ok(p), Ok(r)) => {
+            return Err(GarError::validation(format!(
+                "[--validate] chave pública divergente: pinned={} runtime={} (ambos em sha256 curto). Operator rodou `garos-init` mas nao comitou a nova chave em client/storage/garos.pub?",
+                &short_hex(&p),
+                &short_hex(&r),
+            )));
+        }
+        (Err(e), _) => {
+            return Err(GarError::validation(format!(
+                "[--validate] chave pinada ausente em {}: {e}. Commit a chave runtime em client/storage/garos.pub antes de promover.",
+                pinned.display()
+            )));
+        }
+        (_, Err(e)) => {
+            return Err(GarError::validation(format!(
+                "[--validate] chave runtime ausente em {}: {e}",
+                keys_dir.join("garos.pub").display()
+            )));
+        }
+    }
+
     // ── 6. current symlink points to this build ─────────────────────────
     let current = image_path.parent().map(|p| p.join("current"));
     if let Some(cur) = current {
@@ -124,6 +172,7 @@ pub fn validate_build_artifacts(image_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
 
     fn make_image_dir() -> std::path::PathBuf {
@@ -134,6 +183,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(env_config)]
     fn test_missing_bzimage_fails() {
         let tmp = make_image_dir();
         let result = validate_build_artifacts(&tmp);
@@ -146,6 +196,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(env_config)]
     fn test_tiny_bzimage_fails() {
         let tmp = make_image_dir();
         // bzImage and initrd below 1MB threshold — must fail with size error
@@ -167,6 +218,7 @@ mod tests {
     /// the manifest's recorded checksum and the file on disk. This is
     /// the regression that bit Phase C of the GAROS rebuild.
     #[test]
+    #[serial(env_config)]
     #[ignore = "tmpfs + nix-build sandbox ENOTDIR false-positive on Linux 6.x; covered by test_tiny_bzimage_fails and the size+integrity gate at runtime"]
     fn test_sha256_mismatch_fails() {
         let tmp = make_image_dir();

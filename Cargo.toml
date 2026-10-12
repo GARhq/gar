@@ -65,6 +65,9 @@ hex = "0.4.3"
 assert_cmd = "2.0"
 predicates = "3.1"
 tempfile = "3.13"
+# serial_test: marca tests que mexem em env vars (std::env::set_var/remove_var
+# é unsafe em programas multi-threaded e quebra tests paralelos). K-2026-10-12.
+serial_test = "3"
 
 [profile.release]
 opt-level = 3

@@ -135,6 +135,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
+    use serial_test::serial;
 
     /// RAII guard for `std::env::set_var` in tests. Restores the previous
     /// value on drop (or removes the var if it was unset before). Prevents
@@ -199,6 +200,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(env_config)]
     fn test_ensure_tier1_ready_happy_path() {
         // Skip storage check flag bypasses the mountpoint probe.
         let _env = ScopedEnv::set(SKIP_STORAGE_CHECKS_ENV, "1");
@@ -214,6 +216,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(env_config)]
     fn test_ensure_tier1_ready_errors_when_images_root_missing() {
         let _env = ScopedEnv::set(SKIP_STORAGE_CHECKS_ENV, "1");
         let http = tmp("tier1-noimg-http");
@@ -236,6 +239,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(env_config)]
     fn test_ensure_tier1_ready_errors_when_http_root_missing() {
         let _env = ScopedEnv::set(SKIP_STORAGE_CHECKS_ENV, "1");
         let images = tmp("tier1-nohttp");
@@ -322,6 +326,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(env_config)]
     fn test_scoped_env_restores_previous_value() {
         // Sanity: the guard actually restores — without this, the
         // other tests' set_var calls would leak into this test.

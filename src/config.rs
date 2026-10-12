@@ -156,8 +156,10 @@ fn env_path(name: &str, default: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial(env_config)]
     fn test_default_config_loads() {
         // Ensure stale env vars from parallel tests don't contaminate this test.
         // K-2026-10-05: parallel tests may have set GAR_HTTP_PORT, GAR_IMAGES_ROOT,
@@ -209,6 +211,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(env_config)]
     fn test_env_u16_invalid() {
         std::env::set_var("GAR_HTTP_PORT", "not-a-number");
         let r = Config::from_env();

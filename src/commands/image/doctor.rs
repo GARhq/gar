@@ -564,6 +564,7 @@ fn print_check(c: &Check) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_check_dir_existing() {
@@ -631,5 +632,173 @@ mod tests {
         let bad = compare_checksum("test", "abc123", "xyz789");
         assert_eq!(bad.status, "FAIL");
         assert!(bad.detail.unwrap().contains("divergente"));
+    }
+
+    // K-2026-10-12: regression tests for the 5 artifact-level checks
+    // (doctor commit 6c89e48). Each test exercises the FAIL branch of a
+    // check by feeding it a deliberately broken fixture.
+
+    #[test]
+    fn test_check_manifest_checksum_kernel_fails_on_divergence() {
+        // Fixture: bzImage content is X, manifest claims SHA(Y).
+        // Must FAIL with "divergente".
+        let tmp = std::env::temp_dir().join(format!(
+            "gar-doc-kernel-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("bzImage"), b"real-kernel-bytes").unwrap();
+        std::fs::write(tmp.join("initrd"), b"i").unwrap();
+        // Manifest with a valid Manifest struct (needs all required fields
+        // including `version` and `timestamp`) but a wrong kernel SHA.
+        let manifest = serde_json::json!({
+            "id": "v",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "version": 1,
+            "system_path": "/nix/store/s",
+            "init_path": "/nix/store/i",
+            "artifacts": {"kernel": "bzImage", "initrd": "initrd", "erofs": ""},
+            "checksums": {
+                "kernel": "0000000000000000000000000000000000000000000000000000000000000000",
+                "initrd": "0000000000000000000000000000000000000000000000000000000000000000",
+                "erofs": ""
+            },
+            "status": "active",
+            "target": "t",
+            "channel": "c",
+            "hardwareClass": "physical-generic",
+            "signature": ""
+        });
+        std::fs::write(
+            tmp.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        let c = check_manifest_checksum_kernel(&tmp);
+        assert_eq!(c.status, "FAIL", "kernel SHA divergence must FAIL");
+        let detail = c
+            .detail
+            .as_deref()
+            .unwrap_or("<no detail>");
+        assert!(
+            detail.contains("divergente"),
+            "error should mention divergente: {detail}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_check_manifest_checksum_initrd_fails_on_divergence() {
+        let tmp = std::env::temp_dir().join(format!(
+            "gar-doc-initrd-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("bzImage"), b"k").unwrap();
+        std::fs::write(tmp.join("initrd"), b"real-initrd-bytes").unwrap();
+        let manifest = serde_json::json!({
+            "id": "v",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "version": 1,
+            "system_path": "/nix/store/s",
+            "init_path": "/nix/store/i",
+            "artifacts": {"kernel": "bzImage", "initrd": "initrd", "erofs": ""},
+            "checksums": {
+                "kernel": "0000000000000000000000000000000000000000000000000000000000000000",
+                "initrd": "0000000000000000000000000000000000000000000000000000000000000000",
+                "erofs": ""
+            },
+            "status": "active",
+            "target": "t",
+            "channel": "c",
+            "hardwareClass": "physical-generic",
+            "signature": ""
+        });
+        std::fs::write(
+            tmp.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        let c = check_manifest_checksum_initrd(&tmp);
+        assert_eq!(c.status, "FAIL", "initrd SHA divergence must FAIL");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    #[serial(env_config)]
+    fn test_check_public_key_match_fails_when_keys_diverge() {
+        // Two different keys → must FAIL.
+        let tmp = std::env::temp_dir().join(format!(
+            "gar-doc-pkm-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let pinned_dir = tmp.join("flake/client/storage");
+        let runtime_dir = tmp.join("runtime-keys");
+        std::fs::create_dir_all(&pinned_dir).unwrap();
+        std::fs::create_dir_all(&runtime_dir).unwrap();
+        std::fs::write(pinned_dir.join("garos.pub"), b"pinned-key-v1").unwrap();
+        std::fs::write(runtime_dir.join("garos.pub"), b"runtime-key-v2").unwrap();
+        let flake_path = tmp.join("flake");
+
+        // Scoped env override so check uses our runtime dir.
+        let prev = std::env::var("GAR_KEYS_DIR").ok();
+        std::env::set_var("GAR_KEYS_DIR", runtime_dir.as_os_str());
+        let c = check_public_key_match(&flake_path);
+        // Restore before assert (so a failing assert still leaves env sane).
+        match prev {
+            Some(v) => std::env::set_var("GAR_KEYS_DIR", v),
+            None => std::env::remove_var("GAR_KEYS_DIR"),
+        }
+        assert_eq!(c.status, "FAIL", "divergent keys must FAIL");
+        assert!(c.detail.unwrap().contains("pinned != runtime"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    #[serial(env_config)]
+    fn test_check_public_key_match_passes_when_keys_match() {
+        // Same bytes both sides → must pass.
+        let tmp = std::env::temp_dir().join(format!(
+            "gar-doc-pkm-ok-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let pinned_dir = tmp.join("flake/client/storage");
+        let runtime_dir = tmp.join("runtime-keys");
+        std::fs::create_dir_all(&pinned_dir).unwrap();
+        std::fs::create_dir_all(&runtime_dir).unwrap();
+        std::fs::write(pinned_dir.join("garos.pub"), b"identical-key").unwrap();
+        std::fs::write(runtime_dir.join("garos.pub"), b"identical-key").unwrap();
+        let flake_path = tmp.join("flake");
+
+        let prev = std::env::var("GAR_KEYS_DIR").ok();
+        std::env::set_var("GAR_KEYS_DIR", runtime_dir.as_os_str());
+        let c = check_public_key_match(&flake_path);
+        match prev {
+            Some(v) => std::env::set_var("GAR_KEYS_DIR", v),
+            None => std::env::remove_var("GAR_KEYS_DIR"),
+        }
+        assert_eq!(c.status, "OK", "matching keys must pass");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_check_public_key_match_fails_when_pinned_missing() {
+        // No pinned key on disk → must FAIL (operator must commit it).
+        let tmp = std::env::temp_dir().join(format!(
+            "gar-doc-pkm-nopin-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let pinned_dir = tmp.join("flake/client/storage");
+        std::fs::create_dir_all(&pinned_dir).unwrap();
+        // No garos.pub written.
+        let flake_path = tmp.join("flake");
+        let c = check_public_key_match(&flake_path);
+        assert_eq!(c.status, "FAIL", "missing pinned key must FAIL");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -65,8 +65,10 @@ pub fn json<T: Serialize>(value: &T) -> crate::error::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial(env_config)]
     fn test_output_mode_detection() {
         std::env::remove_var("GAR_JSON_OUTPUT");
         assert!(!OutputMode::from_env().is_json());
