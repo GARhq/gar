@@ -21,14 +21,26 @@ pub async fn dispatch(cmd: ServerCmd) -> Result<()> {
             services,
             skip_disk_check,
             skip_health_check,
+            skip_gc,
             check_flake,
             dry_run,
-        } => lifecycle::cmd_update(services, skip_disk_check, skip_health_check, check_flake, dry_run).await,
+        } => {
+            lifecycle::cmd_update(
+                services,
+                skip_disk_check,
+                skip_health_check,
+                skip_gc,
+                check_flake,
+                dry_run,
+            )
+            .await
+        }
         ServerCmd::Clean => lifecycle::cmd_clean().await,
         ServerCmd::Check {
             inventory,
             allow_empty,
-        } => info::cmd_check(inventory, allow_empty).await,
+            flake_drift,
+        } => info::cmd_check(inventory, allow_empty, flake_drift).await,
         ServerCmd::Repl => info::cmd_repl(),
         ServerCmd::Path => info::cmd_path(),
         ServerCmd::Enter => info::cmd_enter(),

@@ -82,6 +82,7 @@ pub async fn cmd_update(
     services: Vec<String>,
     skip_disk_check: bool,
     skip_health_check: bool,
+    skip_gc: bool,
     check_flake: bool,
     dry_run: bool,
 ) -> Result<()> {
@@ -105,8 +106,8 @@ pub async fn cmd_update(
     output::info(format!("target_host : {}", cfg.target_host));
     output::info(format!("services    : {}", services.join(", ")));
     output::info(format!(
-        "flags       : skip_disk_check={} skip_health_check={} dry_run={}",
-        skip_disk_check, skip_health_check, dry_run
+        "flags       : skip_disk_check={} skip_gc={} skip_health_check={} dry_run={}",
+        skip_disk_check, skip_gc, skip_health_check, dry_run
     ));
 
     if dry_run {
@@ -117,6 +118,7 @@ pub async fn cmd_update(
             &services,
             skip_disk_check,
             skip_health_check,
+            skip_gc,
         );
     }
 
@@ -129,7 +131,7 @@ pub async fn cmd_update(
             // 1) flake update (sync — call nix via std::process::Command
             //    directly to avoid "Cannot start a runtime from within
             //    a runtime" — `block_on` inside #[tokio::main] is UB).
-            output::info("[1/6] Atualizando flake inputs...");
+            output::info("[1/7] Atualizando flake inputs...");
             use std::process::Command;
             let status = Command::new("nix")
                 .args(["flake", "update"])
@@ -141,22 +143,30 @@ pub async fn cmd_update(
                     "nix flake update falhou (exit {})",
                     s.code().unwrap_or(-1)
                 )))?,
-                Err(e) => Err(GarError::config(format!(
-                    "nix flake update: {e}"
-                )))?,
+                Err(e) => Err(GarError::config(format!("nix flake update: {e}")))?,
+            }
+
+            // 1.5) nix-collect-garbage (preserva 7d, libera espaço para o build).
+            // K-2026-10-06: roda por padrão em todo update. Idempotente com
+            // nix.gc.automatic no NixOS module. Use --skip-gc para pular.
+            if !skip_gc {
+                output::info("[1.5/7] Coletando lixo do /nix (preserva 7d)...");
+                run_collect_garbage()?;
+            } else {
+                output::info("[1.5/7] Coleta de lixo pulada (--skip-gc).");
             }
 
             // 3) disk precheck (renumbered — see order comment)
             if !skip_disk_check {
-                output::info("[3/6] Checando espaço livre em /nix...");
+                output::info("[3/7] Checando espaço livre em /nix...");
                 check_free_nix_space(MIN_FREE_NIX_MB)?;
             } else {
-                output::info("[3/6] Checagem de disco pulada (--skip-disk-check).");
+                output::info("[3/7] Checagem de disco pulada (--skip-disk-check).");
             }
 
             // 4) build + test (combined via "test"; the previous generation
             //    is bootable until we run "switch" below).
-            output::info("[4/6] Aplicando em modo de teste (nh os test)...");
+            output::info("[4/7] Aplicando em modo de teste (nh os test)...");
             run_nh_os_action(&cfg, "test")?;
             // Critical: if test failed, run_nh_os_action returned Err already.
 
@@ -167,7 +177,7 @@ pub async fn cmd_update(
             //    --skip-flake-check default keeps the safe path; opt in
             //    with --check-flake for a thorough (slower) validation.
             if check_flake {
-                output::info("[4.5/6] Validando flake (nix flake check)...");
+                output::info("[4.5/7] Validando flake (nix flake check)...");
                 let system_attr = format!("nixosConfigurations.{}", cfg.target_host);
                 let flake_ref = format!(".#{}@toplevel", system_attr);
                 let status = Command::new("nix")
@@ -187,15 +197,13 @@ pub async fn cmd_update(
                         "nix flake check falhou (exit {})",
                         s.code().unwrap_or(-1)
                     )))?,
-                    Err(e) => Err(GarError::config(format!(
-                        "nix flake check: {e}"
-                    )))?,
+                    Err(e) => Err(GarError::config(format!("nix flake check: {e}")))?,
                 }
             }
 
             // 5) health check
             if !skip_health_check {
-                output::info("[5/6] Verificando integridade dos serviços críticos...");
+                output::info("[5/7] Verificando integridade dos serviços críticos...");
                 std::thread::sleep(Duration::from_secs(3));
                 let fails = check_critical_services(&services)?;
                 if fails > 0 {
@@ -210,12 +218,18 @@ pub async fn cmd_update(
                     ));
                 }
             } else {
-                output::info("[5/6] Health check pulado (--skip-health-check).");
+                output::info("[5/7] Health check pulado (--skip-health-check).");
             }
 
             // 6) switch
-            output::info("[6/6] Consolidando no bootloader (nh os switch)...");
-            run_nh_os_action(&cfg, "switch")?;
+            output::info("[6/7] Consolidando no bootloader (nh os switch)...");
+
+            // 7) post-switch gc (libera paths usados só pelo build do switch)
+            output::info("[7/7] Limpeza final: nix-collect-garbage (preserva 7d)...");
+            // Best-effort: falha aqui sóloga, não aborta o update (que já
+            // consolidou). Idempotente — se skip_gc foi pedido, o operator
+            // pode rodar `gar server clean` depois manualmente.
+            let _ = run_collect_garbage();
 
             Ok(())
         },
@@ -395,6 +409,7 @@ fn plan_only(
     services: &[String],
     skip_disk_check: bool,
     skip_health_check: bool,
+    skip_gc: bool,
 ) -> Result<()> {
     let mut plan = String::new();
     plan.push_str("Plano de atualização (DRY-RUN, nada será executado):\n");
@@ -403,6 +418,10 @@ fn plan_only(
     plan.push_str(&format!("  services    : {}\n", services.join(", ")));
     plan.push_str("  etapas      :\n");
     plan.push_str("    1. nix flake update\n");
+    plan.push_str(&format!(
+        "    1.5. nix-collect-garbage (preserva 7d)  {}\n",
+        if skip_gc { "(PULADO)" } else { "" }
+    ));
     plan.push_str("    2. nix flake check\n");
     plan.push_str(&format!(
         "    3. df /nix >= {MIN_FREE_NIX_MB}MB  {}\n",
@@ -414,7 +433,40 @@ fn plan_only(
         if skip_health_check { "(PULADO)" } else { "" }
     ));
     plan.push_str("    6. nh os switch\n");
+    plan.push_str(&format!(
+        "    7. nix-collect-garbage (pós-switch)  {}\n",
+        if skip_gc { "(PULADO)" } else { "" }
+    ));
     output::info(plan.trim_end());
+    Ok(())
+}
+
+/// Run `nix-collect-garbage --delete-older-than 7d` and report freed space.
+///
+/// Called from `cmd_update` (steps 1.5 and 7) to keep /nix healthy
+/// before and after a rebuild. Best-effort: failures are logged but
+/// don't abort the update (the switch already happened).
+///
+/// K-2026-10-06: extracted from `cmd_clean` so the GC step is reusable.
+fn run_collect_garbage() -> Result<()> {
+    let out = Command::new("nix-collect-garbage")
+        .args(["--delete-older-than", "7d"])
+        .output()
+        .map_err(|e| GarError::config(format!("nix-collect-garbage: {e}")))?;
+    if !out.status.success() {
+        return Err(GarError::config(format!(
+            "nix-collect-garbage falhou (exit {}): {}",
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr)
+        )));
+    }
+    // Parse "X store paths deleted, Y MiB freed" from stdout to report.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if let Some(line) = stdout.lines().find(|l| l.contains("freed")) {
+        output::info(format!("[OK] {line}"));
+    } else {
+        output::info("[OK] nix-collect-garbage concluído");
+    }
     Ok(())
 }
 

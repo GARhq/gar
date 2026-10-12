@@ -17,9 +17,16 @@ pub struct StatusReport {
 }
 
 /// `gar server check` — nix flake check.
-pub async fn cmd_check(inventory: Option<std::path::PathBuf>, allow_empty: bool) -> Result<()> {
+pub async fn cmd_check(
+    inventory: Option<std::path::PathBuf>,
+    allow_empty: bool,
+    flake_drift: bool,
+) -> Result<()> {
     let cfg = Config::from_env()?;
     output::section("==> gar server check");
+    if flake_drift {
+        return check_flake_drift(&cfg).await;
+    }
     if let Some(inv_path) = inventory {
         if !inv_path.exists() {
             return Err(GarError::config(format!(
@@ -46,6 +53,106 @@ pub async fn cmd_check(inventory: Option<std::path::PathBuf>, allow_empty: bool)
         output::ok(format!("flake check OK em {}", cfg.flake_path.display()));
     }
     Ok(())
+}
+
+/// `gar server check --flake-drift` — compare local flake.lock pins vs
+/// upstream `GARhq/*` heads.
+///
+/// Reads the operational `flake.lock`, extracts the `gar-cli` pin, and
+/// fetches the upstream `GARhq/gar` HEAD rev. If the local rev lags the
+/// upstream by N commits (or doesn't exist upstream), reports the drift
+/// and exits non-zero so operators can run `gar server update` to sync.
+///
+/// K-2026-10-06: prevents the silent "lockfile is 3 weeks old" failure
+/// mode that bit Phase C of the GAROS rebuild.
+async fn check_flake_drift(cfg: &Config) -> Result<()> {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct FlakeLock {
+        nodes: std::collections::BTreeMap<String, FlakeNode>,
+    }
+    #[derive(Deserialize)]
+    struct FlakeNode {
+        locked: Option<FlakeLocked>,
+    }
+    #[derive(Deserialize)]
+    struct FlakeLocked {
+        rev: Option<String>,
+    }
+
+    let lock_path = cfg.flake_path.join("flake.lock");
+    if !lock_path.is_file() {
+        return Err(GarError::config(format!(
+            "flake.lock ausente em {}",
+            lock_path.display()
+        )));
+    }
+    let lock_text = std::fs::read_to_string(&lock_path)?;
+    let lock: FlakeLock = serde_json::from_str(&lock_text)
+        .map_err(|e| GarError::config(format!("parse flake.lock: {e}")))?;
+
+    let local = lock
+        .nodes
+        .get("gar-cli")
+        .and_then(|n| n.locked.as_ref())
+        .and_then(|l| l.rev.as_ref())
+        .ok_or_else(|| GarError::config("gar-cli input ausente do flake.lock".to_string()))?;
+    let local_short = &local[..12.min(local.len())];
+
+    // Query upstream HEAD via the github REST API. Cheap (60 req/h
+    // unauthenticated) and avoids depending on the `gh` CLI.
+    let url = "https://api.github.com/repos/GARhq/gar/commits/main";
+    let body = ureq_get(url).map_err(|e| GarError::config(format!("fetch upstream HEAD failed: {e}")))?;
+    let upstream_sha = body
+        .lines()
+        .find_map(|l| {
+            // Look for the "sha" key in the JSON response.
+            if let Some(idx) = l.find("\"sha\":") {
+                let after = &l[idx + 6..];
+                let after = after.trim_start_matches(' ').trim_start_matches('"');
+                return Some(after[..12.min(after.len())].to_string());
+            }
+            None
+        })
+        .ok_or_else(|| GarError::config("upstream HEAD response sem 'sha'".to_string()))?;
+
+    if local_short == upstream_sha {
+        output::ok(format!(
+            "flake.lock gar-cli está em sincronia com upstream ({} == {})",
+            local_short, upstream_sha
+        ));
+        return Ok(());
+    }
+
+    output::warn(format!(
+        "flake drift detectado: local={} upstream={}",
+        local_short, upstream_sha
+    ));
+    output::info("Rode `gar server update` para sincronizar.");
+    Err(GarError::config(format!(
+        "flake drift: local {} != upstream {}",
+        local_short, upstream_sha
+    )))
+}
+
+/// Tiny helper to GET a URL with a short timeout, returning the body as String.
+/// Uses `curl` (already on PATH) via `std::process::Command` so we don't add
+/// a new Rust dep just for this one call. Returns a `String` error so the
+/// caller can wrap it in `GarError::config(...)`.
+fn ureq_get(url: &str) -> std::result::Result<String, String> {
+    let out = Command::new("curl")
+        .args(["-sS", "-m", "10", url])
+        .output()
+        .map_err(|e| format!("spawn curl: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "curl exit {}: {}",
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// `gar server repl` — nix repl (interactive).

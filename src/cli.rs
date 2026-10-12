@@ -133,6 +133,11 @@ pub enum ServerCmd {
         #[arg(long)]
         skip_disk_check: bool,
 
+        /// Skip the `nix-collect-garbage` step that runs before disk precheck.
+        /// Off by default — gc runs every update to keep /nix healthy.
+        #[arg(long)]
+        skip_gc: bool,
+
         /// Skip post-test health check (services must be alive after test)
         #[arg(long)]
         skip_health_check: bool,
@@ -159,6 +164,12 @@ pub enum ServerCmd {
         /// Allow empty inventory during validation (sets requireNonEmpty to false)
         #[arg(long)]
         allow_empty: bool,
+
+        /// Compare local `flake.lock` `gar-cli` rev vs upstream `GARhq/gar` HEAD.
+        /// Exits non-zero if drift is detected so this can be wired into cron / monitoring.
+        /// K-2026-10-06: prevents the silent "lockfile is weeks old" failure mode.
+        #[arg(long)]
+        flake_drift: bool,
     },
     /// Open nix repl on local flake
     Repl,
