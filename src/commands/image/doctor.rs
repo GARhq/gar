@@ -100,6 +100,29 @@ pub async fn run() -> Result<()> {
     // Active manifest count (should be exactly 1)
     checks.push(check_active_manifest_count(&cfg.images_root));
 
+    // K-2026-10-06: deeper integrity checks (artifact-level)
+    if let Some(current_dir) = current_build_dir(&cfg.images_root) {
+        checks.push(check_manifest_checksum_kernel(&current_dir));
+        checks.push(check_manifest_checksum_initrd(&current_dir));
+        checks.push(check_manifest_signature(&current_dir, &cfg.flake_path));
+        checks.push(check_public_key_match(&cfg.flake_path));
+    } else {
+        // No current build → skip integrity checks (degraded)
+        for name in [
+            "manifest-checksum-kernel",
+            "manifest-checksum-initrd",
+            "manifest-signature",
+            "public-key-match",
+        ] {
+            checks.push(Check {
+                name: name.into(),
+                status: "SKIP".into(),
+                detail: Some("sem build atual (current symlink ausente)".into()),
+            });
+        }
+    }
+    checks.push(check_http_serve_content(&cfg));
+
     // Tally
     let ok = checks.iter().filter(|c| c.status == "OK").count();
     let fail = checks.iter().filter(|c| c.status == "FAIL").count();
@@ -280,6 +303,249 @@ fn check_active_manifest_count(images_root: &Path) -> Check {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// K-2026-10-06: artifact-level integrity checks (Phase C regression suite).
+//
+// These five checks catch the class of bug where the manifest, the
+// artifacts, the signature, and the public key all "look" present but
+// are mutually inconsistent — exactly the silent failure mode that
+// bit Phase C of the GAROS rebuild.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Resolve the `current` build directory, or `None` if no current build
+/// is published. Used to anchor the artifact-level checks below.
+fn current_build_dir(images_root: &Path) -> Option<std::path::PathBuf> {
+    let current = images_root.join("current");
+    let target = std::fs::read_link(&current).ok()?;
+    let name = target.file_name()?;
+    Some(images_root.join(name))
+}
+
+/// Recalculate SHA-256 of bzImage and compare with manifest.
+fn check_manifest_checksum_kernel(image_path: &Path) -> Check {
+    let manifest = match read_manifest(image_path) {
+        Ok(m) => m,
+        Err(e) => return fail("manifest-checksum-kernel", e),
+    };
+    let actual = match crate::services::build::sha256_file(&image_path.join("bzImage")) {
+        Ok(s) => s,
+        Err(e) => return fail("manifest-checksum-kernel", format!("sha256 falhou: {e}")),
+    };
+    compare_checksum(
+        "manifest-checksum-kernel",
+        &actual,
+        &manifest.checksums.kernel,
+    )
+}
+
+/// Recalculate SHA-256 of initrd and compare with manifest.
+fn check_manifest_checksum_initrd(image_path: &Path) -> Check {
+    let manifest = match read_manifest(image_path) {
+        Ok(m) => m,
+        Err(e) => return fail("manifest-checksum-initrd", e),
+    };
+    let actual = match crate::services::build::sha256_file(&image_path.join("initrd")) {
+        Ok(s) => s,
+        Err(e) => return fail("manifest-checksum-initrd", format!("sha256 falhou: {e}")),
+    };
+    compare_checksum(
+        "manifest-checksum-initrd",
+        &actual,
+        &manifest.checksums.initrd,
+    )
+}
+
+/// Verify Ed25519 signature of manifest against `keys/garos.pub`.
+///
+/// `flake_path` is currently unused (the keys directory is the source
+/// of trust, not the flake checkout) but is kept in the signature for
+/// symmetry with `check_public_key_match` and to make future refactors
+/// (e.g. read the expected public key from the flake) easier.
+fn check_manifest_signature(image_path: &Path, flake_path: &Path) -> Check {
+    let _ = flake_path; // reserved for future use
+    let keys_dir = if let Ok(env) = std::env::var("GAR_KEYS_DIR") {
+        if !env.is_empty() {
+            std::path::PathBuf::from(env)
+        } else {
+            std::path::PathBuf::from("/var/lib/garos/keys")
+        }
+    } else {
+        std::path::PathBuf::from("/var/lib/garos/keys")
+    };
+    if !keys_dir.join("garos.key").is_file() {
+        return Check {
+            name: "manifest-signature".into(),
+            status: "SKIP".into(),
+            detail: Some(format!(
+                "{} ausente — chaves nao geradas (rode `gar server init-keys` ou garos-init)",
+                keys_dir.join("garos.key").display()
+            )),
+        };
+    }
+    let manifest_path = image_path.join("manifest.json");
+    match crate::services::crypto::verify_manifest(&keys_dir, &manifest_path) {
+        Ok(()) => Check {
+            name: "manifest-signature".into(),
+            status: "OK".into(),
+            detail: None,
+        },
+        Err(e) => fail(
+            "manifest-signature",
+            format!("assinatura Ed25519 inválida: {e}"),
+        ),
+    }
+}
+
+/// Compare the public key in `<flake>/client/storage/garos.pub` (the
+/// pinned source) against the live `keys/garos.pub` (the runtime
+/// signer). If they differ, the operational checkout has drifted from
+/// the source of truth — clients booted from the old key will reject
+/// manifests signed with the new key.
+fn check_public_key_match(flake_path: &Path) -> Check {
+    let pinned = flake_path.join("client/storage/garos.pub");
+    let runtime = if let Ok(env) = std::env::var("GAR_KEYS_DIR") {
+        if !env.is_empty() {
+            std::path::PathBuf::from(env).join("garos.pub")
+        } else {
+            std::path::PathBuf::from("/var/lib/garos/keys/garos.pub")
+        }
+    } else {
+        std::path::PathBuf::from("/var/lib/garos/keys/garos.pub")
+    };
+    let pinned_bytes = match std::fs::read(&pinned) {
+        Ok(b) => b,
+        Err(e) => {
+            return fail(
+                "public-key-match",
+                format!("chave pinada ausente em {}: {e}", pinned.display()),
+            );
+        }
+    };
+    let runtime_bytes = match std::fs::read(&runtime) {
+        Ok(b) => b,
+        Err(e) => {
+            return fail(
+                "public-key-match",
+                format!("chave runtime ausente em {}: {e}", runtime.display()),
+            );
+        }
+    };
+    if pinned_bytes == runtime_bytes {
+        Check {
+            name: "public-key-match".into(),
+            status: "OK".into(),
+            detail: None,
+        }
+    } else {
+        fail(
+            "public-key-match",
+            format!(
+                "pinned != runtime: pinned_sha256={} runtime_sha256={}",
+                short_sha(&pinned_bytes),
+                short_sha(&runtime_bytes)
+            ),
+        )
+    }
+}
+
+/// GET the current bzImage via HTTP and confirm the body matches the
+/// file on disk. Catches the case where nginx is serving stale content
+/// (e.g. after a `mv` that didn't refresh the symlink, or a
+/// worker process with cached file descriptor).
+fn check_http_serve_content(cfg: &Config) -> Check {
+    let url = format!(
+        "http://{}:{}/netboot/current/bzImage",
+        cfg.server_ip, cfg.http_port
+    );
+    let local = cfg.images_root.join("current").join("bzImage");
+    let local_sha = match crate::services::build::sha256_file(&local) {
+        Ok(s) => s,
+        Err(e) => {
+            return fail("http-serve-content", format!("local bzImage: {e}"));
+        }
+    };
+    let out = std::process::Command::new("curl")
+        .args(["-sS", "--max-time", "5", url.as_str()])
+        .output();
+    let body = match out {
+        Ok(o) if o.status.success() => o.stdout,
+        Ok(o) => {
+            return fail(
+                "http-serve-content",
+                format!(
+                    "curl exit {}: {}",
+                    o.status,
+                    String::from_utf8_lossy(&o.stderr)
+                ),
+            );
+        }
+        Err(e) => return fail("http-serve-content", format!("curl falhou: {e}")),
+    };
+    let remote_sha = short_sha(&body);
+    if remote_sha == local_sha {
+        Check {
+            name: "http-serve-content".into(),
+            status: "OK".into(),
+            detail: None,
+        }
+    } else {
+        fail(
+            "http-serve-content",
+            format!(
+                "divergente: local={} remote={} (nginx pode estar servindo stale)",
+                &local_sha[..12],
+                &remote_sha[..12.min(remote_sha.len())]
+            ),
+        )
+    }
+}
+
+// Helpers for the artifact-level checks above. Internal — not part of
+// the public doctor API.
+
+fn fail(name: &str, detail: impl Into<String>) -> Check {
+    Check {
+        name: name.into(),
+        status: "FAIL".into(),
+        detail: Some(detail.into()),
+    }
+}
+
+fn read_manifest(
+    image_path: &Path,
+) -> std::result::Result<crate::services::manifest::Manifest, String> {
+    let p = image_path.join("manifest.json");
+    let bytes = std::fs::read(&p).map_err(|e| format!("manifest.json ilegível: {e}"))?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("manifest.json inválido: {e}"))
+}
+
+fn compare_checksum(name: &str, actual: &str, expected: &str) -> Check {
+    if actual == expected {
+        Check {
+            name: name.into(),
+            status: "OK".into(),
+            detail: None,
+        }
+    } else {
+        fail(
+            name,
+            format!(
+                "divergente: disco={} manifest={}",
+                &actual[..12.min(actual.len())],
+                &expected[..12.min(expected.len())]
+            ),
+        )
+    }
+}
+
+fn short_sha(bytes: &[u8]) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    bytes.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
 fn print_check(c: &Check) {
     let status_colored = match c.status.as_str() {
         "OK" => "OK".green().bold().to_string(),
@@ -332,5 +598,38 @@ mod tests {
         let c = check_symlink(&tmp, "test");
         assert_eq!(c.status, "FAIL");
         std::fs::remove_file(&tmp).unwrap();
+    }
+
+    // K-2026-10-06: 3 new tests for the artifact-level integrity checks.
+
+    /// Confirms `current_build_dir` resolves the symlink target.
+    #[test]
+    fn test_current_build_dir_resolves_symlink() {
+        let tmp = std::env::temp_dir().join(format!("gar-cbdr-{}", std::process::id()));
+        let real = tmp.join("v-test-real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink("v-test-real", tmp.join("current")).unwrap();
+        let resolved = current_build_dir(&tmp).expect("should resolve");
+        assert!(resolved.ends_with("v-test-real"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Confirms `current_build_dir` returns None when the symlink is absent.
+    #[test]
+    fn test_current_build_dir_missing_returns_none() {
+        let tmp = std::env::temp_dir().join(format!("gar-cbdm-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert!(current_build_dir(&tmp).is_none());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// `compare_checksum` returns OK on match, FAIL on divergence.
+    #[test]
+    fn test_compare_checksum_match_and_diverge() {
+        let ok = compare_checksum("test", "abc123", "abc123");
+        assert_eq!(ok.status, "OK");
+        let bad = compare_checksum("test", "abc123", "xyz789");
+        assert_eq!(bad.status, "FAIL");
+        assert!(bad.detail.unwrap().contains("divergente"));
     }
 }
