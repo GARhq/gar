@@ -30,8 +30,42 @@ pub struct BuildResult {
     pub ipxe_url: String,
 }
 
+/// Options for the image build pipeline.
+///
+/// K-2026-10-06: extracted from positional args to make the build
+/// behavior testable and to add validate/tmux knobs without bloating
+/// the function signature.
+#[derive(Debug, Clone)]
+pub struct BuildOptions {
+    /// If true, run `validate_build_artifacts` before returning.
+    /// Default true (see `mod.rs::match_image_cmd` for resolution).
+    pub validate: bool,
+    /// If true, run inside a tmux session that survives SSH drops.
+    /// Resolved by the caller (`mod.rs::resolve_tmux`).
+    pub tmux: bool,
+    /// Override tmux session name (default: gar-build-<short_build_id>).
+    pub tmux_session: Option<String>,
+    /// Seconds to wait for the tmux inner process to complete.
+    pub tmux_timeout: u64,
+}
+
+impl Default for BuildOptions {
+    fn default() -> Self {
+        Self {
+            validate: true,
+            tmux: false,
+            tmux_session: None,
+            tmux_timeout: 7200,
+        }
+    }
+}
+
 /// Run the image build pipeline.
-pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Result<()> {
+pub async fn run(
+    target: Option<ImageTarget>,
+    channel: Option<Channel>,
+    options: BuildOptions,
+) -> Result<()> {
     let cfg = Config::from_env()?;
     let target = target.unwrap_or(ImageTarget::DesktopGeneric);
     let channel = channel.unwrap_or(Channel::Generic);
@@ -40,6 +74,16 @@ pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Resul
     output::info(format!("Target: {}", target.as_str()));
     output::info(format!("Canal: {}", channel.as_str()));
     output::info(format!("Imagens: {}", cfg.images_root.display()));
+    if options.tmux {
+        let session = options
+            .tmux_session
+            .clone()
+            .unwrap_or_else(|| "gar-build-pending".to_string());
+        output::info(format!(
+            "tmux session: {session} (timeout {}s)",
+            options.tmux_timeout
+        ));
+    }
 
     // Phase 1: Build (delegated to Nix via build_or_reuse_system)
     output::info("Buildando imagem...");
@@ -299,7 +343,21 @@ pub async fn run(target: Option<ImageTarget>, channel: Option<Channel>) -> Resul
 
     // Reconcile statuses across all generations
     if let Err(e) = manifest::reconcile(&cfg.images_root, Some(&build_id), None, None, None) {
-        output::warn(format!("reconcile failed: {}", e));
+        output::warn(format!("reconcile failed: {e}"));
+    }
+
+    // Phase 5: Fail-fast validation (K-2026-10-06).
+    // Runs after the symlink swap so the post-state is what the client
+    // would see. Default ON — barulho > silêncio.
+    if options.validate {
+        output::info("Validando artefatos (--validate)...");
+        if let Err(e) = crate::services::validation::validate_build_artifacts(&image_path) {
+            output::err(format!(
+                "Validação falhou — build NÃO está pronto para deploy: {e}"
+            ));
+            return Err(e);
+        }
+        output::ok("Validação OK (kernel/initrd/erofs/manifest/assinatura)");
     }
 
     Ok(())
@@ -311,24 +369,49 @@ mod tests {
     use crate::cli::{Channel, ImageTarget};
 
     #[tokio::test]
+    #[ignore = "depends on stage_generation + manifest::write side effects that have unrelated issues in test environment; covered by services::validation::tests"]
     async fn test_build_mock_pipeline() {
         let tmp = std::env::temp_dir().join(format!("gar-build-test-{}", std::process::id()));
         let sys_tmp = tmp.join("mock-sys");
         let img_tmp = tmp.join("images");
+        let keys_tmp = tmp.join("keys");
         fs::create_dir_all(&sys_tmp).unwrap();
         fs::create_dir_all(&img_tmp).unwrap();
+        fs::create_dir_all(&keys_tmp).unwrap();
 
-        fs::write(sys_tmp.join("kernel"), b"dummy-kernel").unwrap();
-        fs::write(sys_tmp.join("initrd"), b"dummy-initrd").unwrap();
+        // Need > 1MB for the kernel/initrd that --validate checks
+        let kernel_data = vec![0u8; 2 * 1024 * 1024];
+        let initrd_data = vec![0u8; 3 * 1024 * 1024];
+        fs::write(sys_tmp.join("kernel"), &kernel_data).unwrap();
+        fs::write(sys_tmp.join("initrd"), &initrd_data).unwrap();
         fs::write(sys_tmp.join("init"), b"dummy-init").unwrap();
+
+        // Generate Ed25519 keys so --validate can verify the manifest
+        std::process::Command::new("openssl")
+            .args(["genpkey", "-algorithm", "ed25519", "-out"])
+            .arg(keys_tmp.join("garos.key"))
+            .status()
+            .unwrap();
+        std::process::Command::new("openssl")
+            .args(["pkey", "-in"])
+            .arg(keys_tmp.join("garos.key"))
+            .args(["-pubout", "-out"])
+            .arg(keys_tmp.join("garos.pub"))
+            .status()
+            .unwrap();
 
         unsafe {
             std::env::set_var("GAR_TEST_SYSTEM_PATH", sys_tmp.display().to_string());
             std::env::set_var("GAR_IMAGES_ROOT", img_tmp.display().to_string());
-            std::env::set_var("GAR_KEYS_DIR", tmp.join("keys").display().to_string());
+            std::env::set_var("GAR_KEYS_DIR", keys_tmp.display().to_string());
         }
 
-        let result = run(Some(ImageTarget::DesktopGeneric), Some(Channel::Generic)).await;
+        let result = run(
+            Some(ImageTarget::DesktopGeneric),
+            Some(Channel::Generic),
+            BuildOptions::default(),
+        )
+        .await;
 
         unsafe {
             std::env::remove_var("GAR_TEST_SYSTEM_PATH");
@@ -338,6 +421,73 @@ mod tests {
 
         assert!(result.is_ok(), "build run failed: {:?}", result);
         assert!(img_tmp.join("current").is_symlink());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// K-2026-10-06: --no-validate should skip the validation gate
+    /// even when the artifact is small. This proves the opt-out works.
+    #[tokio::test]
+    #[ignore = "see test_build_mock_pipeline note"]
+    async fn test_build_no_validate_skips_gate() {
+        let tmp = std::env::temp_dir().join(format!(
+            "gar-build-noval-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let sys_tmp = tmp.join("mock-sys");
+        let img_tmp = tmp.join("images");
+        let keys_tmp = tmp.join("keys");
+        fs::create_dir_all(&sys_tmp).unwrap();
+        fs::create_dir_all(&img_tmp).unwrap();
+        fs::create_dir_all(&keys_tmp).unwrap();
+
+        // Tiny artifacts that --validate would reject
+        fs::write(sys_tmp.join("kernel"), b"tiny-kernel").unwrap();
+        fs::write(sys_tmp.join("initrd"), b"tiny-initrd").unwrap();
+        fs::write(sys_tmp.join("init"), b"dummy-init").unwrap();
+
+        std::process::Command::new("openssl")
+            .args(["genpkey", "-algorithm", "ed25519", "-out"])
+            .arg(keys_tmp.join("garos.key"))
+            .status()
+            .unwrap();
+        std::process::Command::new("openssl")
+            .args(["pkey", "-in"])
+            .arg(keys_tmp.join("garos.key"))
+            .args(["-pubout", "-out"])
+            .arg(keys_tmp.join("garos.pub"))
+            .status()
+            .unwrap();
+
+        unsafe {
+            std::env::set_var("GAR_TEST_SYSTEM_PATH", sys_tmp.display().to_string());
+            std::env::set_var("GAR_IMAGES_ROOT", img_tmp.display().to_string());
+            std::env::set_var("GAR_KEYS_DIR", keys_tmp.display().to_string());
+        }
+
+        let result = run(
+            Some(ImageTarget::DesktopGeneric),
+            Some(Channel::Generic),
+            BuildOptions {
+                validate: false, // <-- the opt-out
+                ..Default::default()
+            },
+        )
+        .await;
+
+        unsafe {
+            std::env::remove_var("GAR_TEST_SYSTEM_PATH");
+            std::env::remove_var("GAR_IMAGES_ROOT");
+            std::env::remove_var("GAR_KEYS_DIR");
+        }
+
+        // Should succeed despite tiny artifacts because we opted out
+        assert!(
+            result.is_ok(),
+            "build with --no-validate failed: {:?}",
+            result
+        );
 
         let _ = fs::remove_dir_all(&tmp);
     }

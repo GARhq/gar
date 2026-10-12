@@ -82,6 +82,36 @@ pub enum ImageCmd {
         /// Channel (generic, lab, rescue)
         #[arg(long, value_enum)]
         channel: Option<Channel>,
+
+        /// Validate build artifacts before returning (default: on).
+        /// Fail-fast on missing/corrupt kernel, initrd, EROFS, manifest,
+        /// or signature mismatch. --no-validate skips the gate (CI use).
+        #[arg(long, default_value_t = true)]
+        validate: bool,
+
+        /// Skip artifact validation (equivalent to --no-validate).
+        /// Off by default — barulho > silêncio.
+        #[arg(long, conflicts_with = "validate")]
+        no_validate: bool,
+
+        /// Run build inside a tmux session named `gar-build-<build_id>`.
+        /// Default: on when TTY available, off when --json / CI=1.
+        /// Survives SSH drops — re-attach via `tmux attach -t <name>`.
+        #[arg(long, default_value_t = false)]
+        tmux: bool,
+
+        /// Run build in foreground (skip tmux orchestration).
+        #[arg(long, conflicts_with = "tmux")]
+        no_tmux: bool,
+
+        /// Override the default tmux session name
+        /// (default: gar-build-<short_build_id>)
+        #[arg(long)]
+        tmux_session: Option<String>,
+
+        /// Tmux inner wait timeout in seconds (default: 7200 = 2h)
+        #[arg(long, default_value_t = 7200)]
+        tmux_timeout: u64,
     },
 
     /// Rollback to the previous generation
