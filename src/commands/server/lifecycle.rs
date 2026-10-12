@@ -221,8 +221,12 @@ pub async fn cmd_update(
                 output::info("[5/7] Health check pulado (--skip-health-check).");
             }
 
-            // 6) switch
+            // 6) switch — consolidates the test build as the new boot default.
+            // K-2026-10-12 (batch cirurgico): previously this step only logged
+            // and went straight to GC, so the new generation never became the
+            // boot default. Mirrors step 4's `nh os test` call.
             output::info("[6/7] Consolidando no bootloader (nh os switch)...");
+            run_nh_os_action(&cfg, "switch")?;
 
             // 7) post-switch gc (libera paths usados só pelo build do switch)
             output::info("[7/7] Limpeza final: nix-collect-garbage (preserva 7d)...");

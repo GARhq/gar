@@ -214,6 +214,7 @@ pub enum ServerCmd {
 /// User subcommands (era garos user).
 #[derive(Debug, Subcommand)]
 pub enum UserCmd {
+    /// Add a new user (with optional quota, password, group)
     Add {
         username: String,
         #[arg(long)]
@@ -225,6 +226,7 @@ pub enum UserCmd {
         #[arg(long)]
         group: Option<String>,
     },
+    /// Resize a user's BTRFS quota (e.g. 100G, 2T)
     Resize {
         username: String,
         #[arg(long)]
@@ -232,17 +234,22 @@ pub enum UserCmd {
         #[arg(long)]
         force: bool,
     },
+    /// List all known users
     List,
+    /// Delete a user (optionally archive their home)
     Delete {
         username: String,
         #[arg(long)]
         archive: bool,
     },
+    /// Run health checks on a user's home/quota/groups
     Doctor {
         username: String,
     },
+    /// Sync BTRFS quota from group catalog to per-user qgroup limits
     #[command(name = "quota-sync")]
     QuotaSync,
+    /// Show recent login/activity for a user
     Activity {
         username: String,
     },
@@ -251,6 +258,7 @@ pub enum UserCmd {
 /// Group subcommands (era garos group).
 #[derive(Debug, Subcommand)]
 pub enum GroupCmd {
+    /// Add a new group (with optional description and storage quota)
     Add {
         groupname: String,
         #[arg(long)]
@@ -258,16 +266,20 @@ pub enum GroupCmd {
         #[arg(long = "storage-quota")]
         storage_quota: Option<String>,
     },
+    /// List all known groups
     List,
+    /// Delete a group (optionally archive its storage sector)
     Delete {
         groupname: String,
         #[arg(long)]
         archive: bool,
     },
+    /// Change permissions on a group's storage sector
     Chmod {
         groupname: String,
         perms: String,
     },
+    /// Add or remove a member from a group
     Members {
         groupname: String,
         #[arg(long)]
@@ -275,9 +287,11 @@ pub enum GroupCmd {
         #[arg(long)]
         remove: Option<String>,
     },
+    /// Show permissions/mode of a group's storage sector
     Permissions {
         groupname: String,
     },
+    /// Create the default GAROS groups (admin, kiosk, lab, etc) if missing
     #[command(name = "ensure-defaults")]
     EnsureDefaults,
 }
