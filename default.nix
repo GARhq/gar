@@ -26,8 +26,12 @@
 
 rustPlatform.buildRustPackage {
   pname = "gar";
-  version = "0.2.1";
-
+  # K-2026-10-12: version is duplicated from Cargo.toml (buildRustPackage
+  # requires it explicitly — there's no auto-discovery from src). Drift
+  # here means the nix build silently produces binaries with the wrong
+  # version string. CI / pre-release hooks should compare this to the
+  # version in ./Cargo.toml and fail if they diverge.
+  version = "0.2.5";
   src = ./.;
 
   cargoLock = {
