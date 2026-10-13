@@ -370,6 +370,7 @@ pub enum SecretsCmd {
 pub enum ImageTarget {
     DesktopGeneric,
     DesktopLab,
+    DesktopXfce,        // K-2026-10-13: perfil leve p/ teste PXE (~1-2 GB)
     HypervDebug,
     RescueMinimal,
 }
@@ -379,6 +380,7 @@ impl ImageTarget {
         match self {
             Self::DesktopGeneric => "desktop-generic",
             Self::DesktopLab => "desktop-lab",
+            Self::DesktopXfce => "desktop-xfce",
             Self::HypervDebug => "hyperv-debug",
             Self::RescueMinimal => "rescue-minimal",
         }

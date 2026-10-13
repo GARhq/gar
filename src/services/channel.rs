@@ -13,7 +13,7 @@ use crate::error::{GarError, Result};
 pub fn target_channel(target: ImageTarget) -> Channel {
     match target {
         ImageTarget::DesktopGeneric => Channel::Generic,
-        ImageTarget::DesktopLab | ImageTarget::HypervDebug => Channel::Lab,
+        ImageTarget::DesktopLab | ImageTarget::HypervDebug | ImageTarget::DesktopXfce => Channel::Lab,
         ImageTarget::RescueMinimal => Channel::Rescue,
     }
 }
@@ -24,6 +24,7 @@ pub fn target_hardware_class_str(target: &str) -> &'static str {
     match target {
         "desktop-generic" => "physical-generic",
         "desktop-lab" => "physical-lab",
+        "desktop-xfce" => "physical-lab",  // K-2026-10-13: herda hw do lab
         "hyperv-debug" => "hyperv",
         "rescue-minimal" => "rescue",
         _ => "unknown",
@@ -35,6 +36,7 @@ pub fn target_hardware_class(target: ImageTarget) -> &'static str {
     match target {
         ImageTarget::DesktopGeneric => "physical-generic",
         ImageTarget::DesktopLab => "physical-lab",
+        ImageTarget::DesktopXfce => "physical-lab",  // K-2026-10-13
         ImageTarget::HypervDebug => "hyperv",
         ImageTarget::RescueMinimal => "rescue",
     }
@@ -237,6 +239,7 @@ pub fn resolve_client_target(
             Some("Alias legado 'physical-generic' detectado; use 'desktop-generic'".into()),
         )),
         "desktop-lab" | "lab" => Ok(("desktop-lab".into(), None)),
+        "desktop-xfce" | "xfce" => Ok(("desktop-xfce".into(), None)),  // K-2026-10-13
         "hyperv-debug" => Ok(("hyperv-debug".into(), None)),
         "rescue-minimal" | "rescue" => {
             let warning = if raw == "rescue" {
@@ -248,7 +251,7 @@ pub fn resolve_client_target(
         }
         other => Err(GarError::invalid_argument(format!(
             "Target invalido: {other}. \
-             Use: desktop-generic, desktop-lab, hyperv-debug ou rescue-minimal"
+             Use: desktop-generic, desktop-lab, desktop-xfce, hyperv-debug ou rescue-minimal"
         ))),
     }
 }
@@ -301,6 +304,10 @@ pub fn target_installable(flake_root: &Path, requested_target: Option<&str>) -> 
         }
         "desktop-lab" => {
             "nixosConfigurations.garos-client-desktop-lab.config.system.build.garosPublishTree"
+        }
+        "desktop-xfce" => {
+            // K-2026-10-13: perfil leve p/ teste PXE
+            "nixosConfigurations.garos-client-desktop-xfce.config.system.build.garosPublishTree"
         }
         "hyperv-debug" => {
             "nixosConfigurations.garos-client-hyperv-debug.config.system.build.garosPublishTree"
