@@ -52,13 +52,9 @@ pub async fn cmd_doctor(flags: &DoctorFlags) -> Result<()> {
     } else {
         output::header("GAR Branding Doctor");
         output::blank_line();
-        render_check(&report.sddm_current);
-        render_check(&report.sddm_theme_dirs);
-        render_check(&report.plymouth_theme);
-        render_check(&report.plasma_look_and_feel);
-        render_check(&report.plasma_desktoptheme);
-        render_check(&report.plasma_color_schemes);
-        render_check(&report.plasma_wallpapers);
+        for check in iter_checks(&report) {
+            render_check(check);
+        }
         output::blank_line();
         if healthy {
             output::ok(format!(
@@ -78,6 +74,24 @@ pub async fn cmd_doctor(flags: &DoctorFlags) -> Result<()> {
     Ok(())
 }
 
+/// Iterate the per-check fields of [`BrandingReport`] in stable order.
+///
+/// Centralizes the list so `cmd_doctor`'s render loop and the
+/// `BrandingReport` struct agree on which checks are reported.
+/// Adding a new field to `BrandingReport` is still a struct change
+/// (can't be helped), but only this slice needs to grow to match.
+fn iter_checks(report: &branding::BrandingReport) -> Vec<&branding::BrandingCheck> {
+    vec![
+        &report.sddm_current,
+        &report.sddm_theme_dirs,
+        &report.plymouth_theme,
+        &report.plasma_look_and_feel,
+        &report.plasma_desktoptheme,
+        &report.plasma_color_schemes,
+        &report.plasma_wallpapers,
+    ]
+}
+
 fn render_check(c: &branding::BrandingCheck) {
     let passed = c.found && !c.matches.is_empty() && c.matches[0] != "nao encontrado";
     if passed {
@@ -85,15 +99,15 @@ fn render_check(c: &branding::BrandingCheck) {
     } else {
         output::warn(&c.label);
     }
-    output::kv("path", c.path.clone());
-    if c.matches.is_empty() {
-        output::kv("matches", "(vazio)");
-    } else if c.matches.len() == 1 {
-        output::kv("matches", c.matches[0].clone());
-    } else {
-        output::kv("matches", "");
-        for m in &c.matches {
-            output::kv("", m.clone());
+    output::kv("path", &c.path);
+    match c.matches.as_slice() {
+        [] => output::kv("matches", "(vazio)"),
+        [single] => output::kv("matches", single),
+        many => {
+            output::kv("matches", "");
+            for m in many {
+                output::kv("", m);
+            }
         }
     }
 }
