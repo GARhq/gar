@@ -9,7 +9,12 @@ pub async fn cmd_list(json_flag: bool) -> Result<()> {
         .unwrap_or_else(|_| json_inventory_path());
 
     let clients = list_clients(&inv_path);
-    let source = inv_path.display().to_string();
+    // GAROS pós-migração usa /etc/garos-inventory/clients.nix. Quando o
+    // usuário não sobrescreve via env var, exibimos o path canônico
+    // atual em vez do path antigo (clients.json) para não confundir
+    // quem lê o output com referências a uma migração que não existe.
+    let source = std::env::var("GAR_CLIENT_INVENTORY_PATH")
+        .unwrap_or_else(|_| "/etc/garos-inventory/clients.nix".to_string());
     let count = clients.len();
     let report = ClientListReport {
         clients,
@@ -24,8 +29,7 @@ pub async fn cmd_list(json_flag: bool) -> Result<()> {
         output::blank_line();
         output::kv("source", source.clone());
         if count == 0 {
-            output::info("(nenhum cliente encontrado — esperado até a Phase 0.5 migrar inventory .nix → .json)");
-            output::info("Phase 0.5: migração inventory .nix → /etc/gar/inventory/clients.json");
+            output::info("(nenhum cliente no inventory — verifique /etc/garos-inventory/clients.nix ou --inventory <path>)");
         } else {
             let rows: Vec<Vec<String>> = report
                 .clients
