@@ -24,8 +24,12 @@ pub async fn cmd_ensure_defaults() -> Result<()> {
             already.push(name.to_string());
             continue;
         }
-        super::core::cmd_add(name, Some(description), Some(quota)).await?;
-        created.push(name.to_string());
+        let result = super::core::add_group(&cfg, name, Some(description), Some(quota)).await?;
+        if result.catalog_updated {
+            created.push(name.to_string());
+        } else {
+            already.push(name.to_string());
+        }
     }
     if cfg.json_output {
         output::json(&GroupEnsureDefaultsResult {
