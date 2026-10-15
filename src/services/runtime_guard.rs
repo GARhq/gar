@@ -9,6 +9,9 @@ use std::path::Path;
 use crate::config::Config;
 use crate::error::{GarError, Result};
 
+/// Device paths that signal a placeholder `/boot` — never operational.
+const PLACEHOLDER_BOOT_DEVICES: &[&str] = &["/dev/disk/by-label/ESP", "/dev/disk/by-label/nixos"];
+
 /// Validate the GAR runtime is intact before applying changes.
 ///
 /// Checks:
@@ -21,21 +24,17 @@ pub fn validate(cfg: &Config) -> Result<()> {
     require_runtime_file(cfg, "params.nix")?;
     require_runtime_file(cfg, "hardware-configuration.nix")?;
 
-    // Resolve /boot via nix eval (best-effort)
     let boot_device = resolve_boot_device(cfg).unwrap_or_default();
     if boot_device.is_empty() {
         return Err(GarError::runtime_guard(
             "nao foi possivel resolver /boot para o installable",
         ));
     }
-    match boot_device.as_str() {
-        "/dev/disk/by-label/ESP" | "/dev/disk/by-label/nixos" => {
-            return Err(GarError::runtime_guard(format!(
-                "/boot ainda resolve para placeholder ({})",
-                boot_device
-            )));
-        }
-        _ => {}
+    if PLACEHOLDER_BOOT_DEVICES.contains(&boot_device.as_str()) {
+        return Err(GarError::runtime_guard(format!(
+            "/boot ainda resolve para placeholder ({})",
+            boot_device
+        )));
     }
 
     Ok(())
@@ -97,28 +96,31 @@ pub fn reexec_as_root_if_needed(action: &str) -> Result<bool> {
     let uid_output = std::process::Command::new("id")
         .arg("-u")
         .output()
-        .map_err(|e| crate::error::GarError::runtime_guard(format!("id falhou: {}", e)))?;
+        .map_err(|e| GarError::runtime_guard(format!("id falhou: {}", e)))?;
     let uid_str = String::from_utf8_lossy(&uid_output.stdout);
     if uid_str.trim() == "0" {
         return Ok(false);
     }
 
-    // Sudo available?
+    // Sudo available and working?
     let sudo_check = std::process::Command::new("sudo").arg("--version").output();
-    if sudo_check.is_err() {
-        return Err(crate::error::GarError::runtime_guard(format!(
-            "requer root ou sudo para executar: {}",
-            action
-        )));
+    match sudo_check {
+        Ok(o) if o.status.success() => {}
+        _ => {
+            return Err(GarError::runtime_guard(format!(
+                "requer root ou sudo para executar: {}",
+                action
+            )));
+        }
     }
 
     // Re-exec via sudo (current args)
     let args: Vec<String> = std::env::args().collect();
     let status = std::process::Command::new("sudo")
-        .args(&args)
+        .args(args)
         .env("GAR_SUDO_REENTRY", "1")
         .status()
-        .map_err(|e| crate::error::GarError::runtime_guard(format!("sudo falhou: {}", e)))?;
+        .map_err(|e| GarError::runtime_guard(format!("sudo falhou: {}", e)))?;
 
     std::process::exit(status.code().unwrap_or(1));
 }
