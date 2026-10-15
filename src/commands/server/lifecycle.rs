@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -225,6 +225,11 @@ pub async fn cmd_update(
     // Resolve flake_path with /etc/garos → cwd fallback (matches bash script).
     let flake_path = resolve_flake_path(&cfg)?;
 
+    // P0-4: bloqueia o update se o flake é um checkout Git sujo. Antes do
+    // dry-run, antes do lock: a checagem é rápida e o operador precisa ver
+    // a mensagem clara ("rode `gar server sync`") mesmo no planeamento.
+    check_flake_tree_clean(&flake_path)?;
+
     let services: Vec<String> = if services.is_empty() {
         DEFAULT_CRITICAL_SERVICES
             .iter()
@@ -441,6 +446,83 @@ fn resolve_flake_path(cfg: &Config) -> Result<std::path::PathBuf> {
     )))
 }
 
+/// Aborta `cmd_update` se `flake_path` for um checkout Git com mudanças
+/// uncommitted (`git status --porcelain` não-vazio).
+///
+/// Caminhos que não são um working tree Git (ex: `/etc/garos` resolvido via
+/// symlink, ou um path absoluto sem `.git/`) passam sem erro: a checagem é
+/// defensiva, não obrigatória — apenas evita que `nix flake update` escreva
+/// `flake.lock` por cima de um lock não-commitado que o operador pode ter
+/// editado à mão.
+///
+/// Mensagem em pt-BR cita `gar server sync` (o caminho feliz de quem está
+/// editando localmente) e o fallback manual (`git commit`/`git stash`).
+fn check_flake_tree_clean(flake_path: &Path) -> Result<()> {
+    // 1. É um working tree Git? `rev-parse --is-inside-work-tree` é a
+    //    maneira canônica de checar sem efeitos colaterais.
+    let probe = Command::new("git")
+        .args([
+            "-C",
+            &flake_path.display().to_string(),
+            "rev-parse",
+            "--is-inside-work-tree",
+        ])
+        .output();
+    let probe = match probe {
+        Ok(o) if o.status.success() => o,
+        // Sem `git` instalado, ou path não-git: prossegue sem checagem.
+        _ => return Ok(()),
+    };
+    let inside = String::from_utf8_lossy(&probe.stdout)
+        .trim()
+        .eq_ignore_ascii_case("true");
+    if !inside {
+        return Ok(());
+    }
+
+    // 2. Tem mudanças uncommitted? `status --porcelain` é estável e scriptável.
+    let status = Command::new("git")
+        .args([
+            "-C",
+            &flake_path.display().to_string(),
+            "status",
+            "--porcelain",
+        ])
+        .output()
+        .map_err(|e| GarError::config(format!("git status em {}: {e}", flake_path.display())))?;
+    if !status.status.success() {
+        // git status com path inválido/ilegível — não bloqueia o update; só loga.
+        output::warn(format!(
+            "git status em {} falhou (exit {}); prosseguindo sem checagem de tree",
+            flake_path.display(),
+            status.status.code().unwrap_or(-1)
+        ));
+        return Ok(());
+    }
+    let dirty = String::from_utf8_lossy(&status.stdout);
+    if dirty.trim().is_empty() {
+        return Ok(());
+    }
+
+    // 3. Tem sujeira — aborta com mensagem clara.
+    let mut preview = String::new();
+    for line in dirty.lines().take(5) {
+        preview.push_str(&format!("\n    {line}"));
+    }
+    let more = if dirty.lines().count() > 5 {
+        "\n    ..."
+    } else {
+        ""
+    };
+    Err(GarError::config(format!(
+        "tree suja em {}; rode `gar server sync` ou faça commit/stash das mudanças antes de continuar. \
+         Arquivos sujos:{}{}",
+        flake_path.display(),
+        preview,
+        more
+    )))
+}
+
 /// Ensure `/nix` has at least `min_mb` MiB of free space.
 fn check_free_nix_space(min_mb: u64) -> Result<()> {
     let output = Command::new("df").args(["-B1M", "/nix"]).output()?;
@@ -653,5 +735,96 @@ mod tests {
         let resolved = resolve_flake_path(&cfg).unwrap();
         assert_eq!(resolved, tmp);
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Helper: init a fresh git repo at `dir`, configure a local user, and
+    /// commit a single file so `git status` is clean by default.
+    fn init_clean_git_repo(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        let run = |args: &[&str]| {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .env("GIT_AUTHOR_NAME", "gar-test")
+                .env("GIT_AUTHOR_EMAIL", "gar@test.local")
+                .env("GIT_COMMITTER_NAME", "gar-test")
+                .env("GIT_COMMITTER_EMAIL", "gar@test.local")
+                .status()
+                .unwrap_or_else(|e| panic!("git {args:?} failed: {e}"));
+            assert!(status.success(), "git {args:?} exit {status:?}");
+        };
+        run(&["init", "--initial-branch=main"]);
+        run(&["config", "user.email", "gar@test.local"]);
+        run(&["config", "user.name", "gar-test"]);
+        std::fs::write(dir.join("README.md"), "init\n").unwrap();
+        run(&["add", "README.md"]);
+        run(&["commit", "-m", "init"]);
+    }
+
+    #[test]
+    fn cmd_update_dirty_tree_aborts() {
+        // P0-4 acceptance: git repo com mudança uncommitted → GarError::Config
+        // com mensagem em pt-BR citando `gar server sync`.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path();
+        init_clean_git_repo(repo);
+
+        // Sanity: tree está limpa antes da mutação.
+        assert!(
+            check_flake_tree_clean(repo).is_ok(),
+            "fresh repo deve estar limpo"
+        );
+
+        // Sujar o tree: editar arquivo rastreado.
+        std::fs::write(repo.join("README.md"), "dirty edit\n").unwrap();
+
+        let err = check_flake_tree_clean(repo).expect_err("dirty tree deve abortar");
+        match err {
+            GarError::Config(msg) => {
+                assert!(
+                    msg.contains("tree suja"),
+                    "mensagem deve mencionar 'tree suja', got: {msg}"
+                );
+                assert!(
+                    msg.contains("gar server sync"),
+                    "mensagem deve sugerir `gar server sync`, got: {msg}"
+                );
+                assert!(
+                    msg.contains(repo.display().to_string().as_str()),
+                    "mensagem deve citar o path do flake, got: {msg}"
+                );
+            }
+            other => panic!("esperava GarError::Config, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cmd_update_clean_tree_passes() {
+        // P0-4 acceptance: repo git limpo → continua normalmente.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path();
+        init_clean_git_repo(repo);
+        assert!(check_flake_tree_clean(repo).is_ok());
+    }
+
+    #[test]
+    fn cmd_update_non_git_path_passes() {
+        // P0-4 acceptance: path sem .git → continua sem erro.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let plain = tmp.path().join("not-a-repo");
+        std::fs::create_dir_all(&plain).unwrap();
+        std::fs::write(plain.join("README.md"), "qualquer coisa\n").unwrap();
+        assert!(check_flake_tree_clean(&plain).is_ok());
+    }
+
+    #[test]
+    fn cmd_update_untracked_file_aborts() {
+        // Arquivo novo não-rastreado também é "dirty" para `git status --porcelain`.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path();
+        init_clean_git_repo(repo);
+        std::fs::write(repo.join("novo.txt"), "untracked\n").unwrap();
+        let err = check_flake_tree_clean(repo).expect_err("untracked deve contar como dirty");
+        assert!(matches!(err, GarError::Config(_)));
     }
 }
