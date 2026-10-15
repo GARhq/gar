@@ -13,6 +13,7 @@ pub mod build;
 pub mod channel;
 pub mod client;
 pub mod crypto;
+pub mod discovery;
 pub mod filesystem;
 pub mod generation;
 pub mod generations;

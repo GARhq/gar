@@ -5,7 +5,7 @@
 //! and last N with manifest. Snapshot via btrfs or `cp -al` (hard links).
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use serde::Serialize;
@@ -13,6 +13,25 @@ use serde::Serialize;
 use crate::config::Config;
 use crate::error::{GarError, Result};
 use crate::output;
+use crate::services::discovery;
+
+/// Pointer names looked up by `resolve_pointers` (in lookup order).
+const POINTER_NAMES: &[&str] = &["current", "previous", "staged"];
+
+/// Decision made for a single generation during classification.
+#[derive(Debug)]
+enum KeepReason {
+    /// Pointed to by `current` / `previous` / `staged`.
+    Pointer,
+    /// mtime within the configured grace window.
+    Recent,
+    /// Has no `manifest.json` — too risky to delete.
+    Unknown,
+    /// Within the last-N retention policy.
+    Retention,
+    /// Candidate for removal.
+    Remove,
+}
 
 #[derive(Debug, Serialize)]
 pub struct GcResult {
@@ -23,6 +42,18 @@ pub struct GcResult {
     pub preserved_unknown: Vec<String>,
     pub removed: Vec<String>,
     pub kept: u32,
+}
+
+/// Buckets populated by `classify_generations` and merged into a
+/// `GcResult` by `build_report`.
+#[derive(Debug, Default)]
+struct Classification {
+    pointer: Vec<String>,
+    retention: Vec<String>,
+    recent: Vec<String>,
+    unknown: Vec<String>,
+    to_remove: Vec<PathBuf>,
+    kept: u32,
 }
 
 pub async fn run(keep: Option<u32>) -> Result<()> {
@@ -38,11 +69,6 @@ pub async fn run(keep: Option<u32>) -> Result<()> {
         return Err(GarError::gc("keep=0 inválido"));
     }
 
-    let snapshots_root = "/srv/data/snapshots".to_string();
-    let snapshot_keep = cfg.gc_snapshot_keep;
-    let grace_seconds = cfg.gc_grace_seconds;
-
-    // Resolve pointer versions
     let pointers = resolve_pointers(&cfg.images_root)?;
     if pointers.is_empty() {
         return Err(GarError::gc(
@@ -50,204 +76,256 @@ pub async fn run(keep: Option<u32>) -> Result<()> {
         ));
     }
 
-    // Collect all v* dirs sorted by mtime descending (newest first)
-    let mut ranked: Vec<(SystemTime, std::path::PathBuf)> = Vec::new();
-    for entry in std::fs::read_dir(&cfg.images_root)? {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        if !path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(|n| n.starts_with('v'))
-            .unwrap_or(false)
-        {
-            continue;
-        }
-        let mtime = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        ranked.push((mtime, path));
-    }
-    ranked.sort_by_key(|r| std::cmp::Reverse(r.0));
+    let ranked = load_ranked(&cfg.images_root)?;
+    let classification = classify_generations(
+        &ranked,
+        &pointers,
+        GcPolicy {
+            keep,
+            grace_seconds: cfg.gc_grace_seconds,
+            now: SystemTime::now(),
+        },
+    );
 
-    let now = SystemTime::now();
-
-    // Classify each generation
-    let mut preserve_ptr = Vec::new();
-    let mut preserve_recent = Vec::new();
-    let mut preserve_unknown = Vec::new();
-    let mut preserve_retention = Vec::new();
-    let mut to_remove = Vec::new();
-    let mut retention_count = 0u32;
-
-    for (mtime, path) in &ranked {
-        let ver = path.file_name().unwrap().to_string_lossy().into_owned();
-
-        // 1. Preserved if any pointer points to it
-        if pointers.contains_key(&ver) {
-            preserve_ptr.push(ver.clone());
-            if path.join("manifest.json").exists() {
-                retention_count += 1;
-            }
-            continue;
-        }
-
-        // 2. Preserved if recent (within grace_seconds)
-        if let Ok(age) = now.duration_since(*mtime) {
-            if age.as_secs() < grace_seconds {
-                preserve_recent.push(ver.clone());
-                if path.join("manifest.json").exists() {
-                    retention_count += 1;
-                }
-                continue;
-            }
-        }
-
-        // 3. Preserved if no manifest (unknown — too risky to delete)
-        if !path.join("manifest.json").exists() {
-            preserve_unknown.push(ver.clone());
-            continue;
-        }
-
-        // 4. Keep last N (with manifest)
-        if retention_count < keep {
-            preserve_retention.push(ver.clone());
-            retention_count += 1;
-            continue;
-        }
-
-        // 5. Mark for removal
-        to_remove.push(path.clone());
-    }
-
-    // Snapshot before removal (BTRFS subvolume or hard-link copy)
-    let snapshot_path = if !to_remove.is_empty() {
-        std::fs::create_dir_all(&snapshots_root).ok();
-        let snapshot_name = format!(
-            "images-pre-gc-{}",
-            chrono::Utc::now().format("%Y%m%d-%H%M%S")
-        );
-        let path = format!("{}/{}", snapshots_root, snapshot_name);
-        let snap_ok = btrfs_snapshot(&cfg.images_root, &path)
-            .or_else(|_| cp_al_snapshot(&cfg.images_root, &path))
-            .is_ok();
-
-        if !snap_ok {
-            return Err(GarError::gc(format!(
-                "snapshot falhou — recusando remoções (images_root={}, snapshots={})",
-                cfg.images_root.display(),
-                snapshots_root
-            )));
-        }
-        Some(path)
+    // Snapshot before any destructive action. If the snapshot fails
+    // we refuse the whole GC so we never lose data we couldn't recover.
+    let snapshot_path = if !classification.to_remove.is_empty() {
+        take_snapshot(&cfg.images_root).await.map_err(|e| {
+            GarError::gc(format!(
+                "snapshot falhou — recusando remoções (images_root={}, err={e})",
+                cfg.images_root.display()
+            ))
+        })?
     } else {
         None
     };
 
-    // Remove marked generations
-    let mut removed: Vec<String> = Vec::new();
-    for path in &to_remove {
-        let ver = path.file_name().unwrap().to_string_lossy().into_owned();
-        output::warn(format!("GC: removendo {}", ver));
-        if let Err(e) = std::fs::remove_dir_all(path) {
-            output::err(format!("falha ao remover {}: {}", ver, e));
-        } else {
-            removed.push(ver);
-        }
-    }
+    let removed = remove_marked(&classification.to_remove);
+    let _ = prune_snapshots("/srv/data/snapshots", cfg.gc_snapshot_keep);
 
-    // Prune old snapshots
-    let _ = prune_snapshots(&snapshots_root, snapshot_keep);
-
-    let result = GcResult {
-        snapshot_path,
-        preserved_pointers: preserve_ptr,
-        preserved_retention: preserve_retention,
-        preserved_recent: preserve_recent,
-        preserved_unknown: preserve_unknown,
-        removed,
-        kept: retention_count,
-    };
-
-    if cfg.json_output {
-        output::json(&result)?;
-    } else if result.snapshot_path.is_some() {
-        output::ok(format!(
-            "GC concluído — snapshot: {}",
-            result.snapshot_path.as_ref().unwrap()
-        ));
-    } else {
-        output::ok(format!(
-            "GC: nada a remover — mantidas as últimas {} (além de ponteiros e proteções conservadoras).",
-            keep
-        ));
-    }
-
+    let result = build_report(classification, removed, snapshot_path);
+    report(&cfg, &result, keep);
     Ok(())
 }
 
+/// Read `images_root`, collect every `v*` directory, and return them
+/// sorted by mtime descending (newest first).
+fn load_ranked(images_root: &Path) -> Result<Vec<(SystemTime, PathBuf)>> {
+    let mut ranked = discovery::iter_version_dirs_with_mtime(images_root)?;
+    ranked.sort_by_key(|r| std::cmp::Reverse(r.0));
+    Ok(ranked)
+}
+
+/// Inputs that don't change between iterations of `classify_generations`:
+/// the retention target, the grace window, and the reference clock.
+/// Grouped to keep `decide`'s argument list under clippy's 7-arg cap
+/// and to make the policy knobs explicit at the call site.
+struct GcPolicy {
+    keep: u32,
+    grace_seconds: u64,
+    now: SystemTime,
+}
+
+/// Decide what to do with each generation, populating the four
+/// preservation buckets and the `to_remove` list. The `keep` policy
+/// counts only generations that *have* a manifest — unknown
+/// (manifest-less) entries are quarantined, not counted.
+fn classify_generations(
+    ranked: &[(SystemTime, PathBuf)],
+    pointers: &HashMap<String, &'static str>,
+    policy: GcPolicy,
+) -> Classification {
+    let mut c = Classification::default();
+
+    for (mtime, path) in ranked {
+        let ver = dir_version_name(path);
+        match decide(path, &ver, mtime, pointers, &mut c.kept, &policy) {
+            KeepReason::Pointer => c.pointer.push(ver),
+            KeepReason::Recent => c.recent.push(ver),
+            KeepReason::Unknown => c.unknown.push(ver),
+            KeepReason::Retention => c.retention.push(ver),
+            KeepReason::Remove => c.to_remove.push(path.clone()),
+        }
+    }
+    c
+}
+
+/// Single-version classifier. Extracted so the rule order is
+/// visible at a glance instead of buried in a 35-line `for` body.
+fn decide(
+    path: &Path,
+    ver: &str,
+    mtime: &SystemTime,
+    pointers: &HashMap<String, &'static str>,
+    kept: &mut u32,
+    policy: &GcPolicy,
+) -> KeepReason {
+    // 1. Preserved if any pointer points to it.
+    if pointers.contains_key(ver) {
+        if discovery::has_manifest(path) {
+            *kept += 1;
+        }
+        return KeepReason::Pointer;
+    }
+
+    // 2. Preserved if recent (within grace_seconds).
+    if let Ok(age) = policy.now.duration_since(*mtime) {
+        if age.as_secs() < policy.grace_seconds {
+            if discovery::has_manifest(path) {
+                *kept += 1;
+            }
+            return KeepReason::Recent;
+        }
+    }
+
+    // 3. Preserved if no manifest (unknown — too risky to delete).
+    if !discovery::has_manifest(path) {
+        return KeepReason::Unknown;
+    }
+
+    // 4. Keep last N (with manifest).
+    if *kept < policy.keep {
+        *kept += 1;
+        return KeepReason::Retention;
+    }
+
+    // 5. Mark for removal.
+    KeepReason::Remove
+}
+
+/// Best-effort `rm -rf` over the marked paths. Returns the names of
+/// generations that were actually removed (failures are reported as
+/// warnings and do not abort the GC).
+fn remove_marked(paths: &[PathBuf]) -> Vec<String> {
+    let mut removed = Vec::new();
+    for path in paths {
+        let ver = dir_version_name(path);
+        output::warn(format!("GC: removendo {ver}"));
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => removed.push(ver),
+            Err(e) => output::err(format!("falha ao remover {ver}: {e}")),
+        }
+    }
+    removed
+}
+
+fn build_report(
+    c: Classification,
+    removed: Vec<String>,
+    snapshot_path: Option<String>,
+) -> GcResult {
+    GcResult {
+        snapshot_path,
+        preserved_pointers: c.pointer,
+        preserved_retention: c.retention,
+        preserved_recent: c.recent,
+        preserved_unknown: c.unknown,
+        removed,
+        kept: c.kept,
+    }
+}
+
+fn report(cfg: &Config, result: &GcResult, keep: u32) {
+    if cfg.json_output {
+        let _ = output::json(result);
+    } else if let Some(snap) = &result.snapshot_path {
+        output::ok(format!("GC concluído — snapshot: {snap}"));
+    } else {
+        output::ok(format!(
+            "GC: nada a remover — mantidas as últimas {keep} (além de ponteiros e proteções conservadoras)."
+        ));
+    }
+}
+
+fn dir_version_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Map the names of every published pointer symlink to the
+/// version they point at. Used to short-circuit GC for any
+/// generation the server is actively serving.
 fn resolve_pointers(images_root: &Path) -> Result<HashMap<String, &'static str>> {
     let mut map = HashMap::new();
-    for name in &["current", "previous", "staged"] {
+    for name in POINTER_NAMES {
         let path = images_root.join(name);
-        if path.is_symlink() {
-            if let Ok(target) = std::fs::read_link(&path) {
-                if let Some(ver) = target.file_name().and_then(|n| n.to_str()) {
-                    map.insert(ver.to_string(), *name);
-                }
+        if !path.is_symlink() {
+            continue;
+        }
+        if let Ok(target) = std::fs::read_link(&path) {
+            if let Some(ver) = target.file_name().and_then(|n| n.to_str()) {
+                map.insert(ver.to_string(), *name);
             }
         }
     }
     Ok(map)
 }
 
-fn btrfs_snapshot(src: &Path, dst: &str) -> Result<()> {
-    // Check if btrfs is available and src is a btrfs subvolume
-    let check = std::process::Command::new("btrfs")
-        .args(["subvolume", "show", &src.display().to_string()])
-        .output();
-    match check {
-        Ok(o) if o.status.success() => {
-            let status = std::process::Command::new("btrfs")
-                .args([
-                    "subvolume",
-                    "snapshot",
-                    "-r",
-                    &src.display().to_string(),
-                    dst,
-                ])
-                .status()?;
-            if !status.success() {
-                return Err(GarError::gc(format!(
-                    "btrfs subvolume snapshot falhou: exit {}",
-                    status.code().unwrap_or(-1)
-                )));
-            }
-            Ok(())
-        }
-        _ => Err(GarError::gc("btrfs não disponível ou src não é subvolume")),
+/// Create a read-only snapshot of `images_root` under
+/// `/srv/data/snapshots/images-pre-gc-<timestamp>`. Tries BTRFS
+/// first; falls back to `cp -al` (hard-link copy) when the source
+/// is not on a BTRFS subvolume.
+async fn take_snapshot(images_root: &Path) -> Result<Option<String>> {
+    let snapshots_root = "/srv/data/snapshots";
+    std::fs::create_dir_all(snapshots_root).ok();
+
+    let snapshot_name = format!(
+        "images-pre-gc-{}",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let path = format!("{snapshots_root}/{snapshot_name}");
+
+    let snap_ok = btrfs_snapshot(images_root, &path)
+        .await
+        .or_else(|_| cp_al_snapshot(images_root, &path));
+    if snap_ok.is_ok() {
+        Ok(Some(path))
+    } else {
+        Ok(None)
     }
+}
+
+fn btrfs_snapshot<'a>(
+    src: &'a Path,
+    dst: &'a str,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        // Probe: is `src` a BTRFS subvolume? `btrfs subvolume show` exits
+        // 0 only when the path is one.
+        let check = std::process::Command::new("btrfs")
+            .args(["subvolume", "show", &src.display().to_string()])
+            .output();
+        match check {
+            Ok(o) if o.status.success() => {
+                crate::services::btrfs::snapshot_readonly(src, Path::new(dst))
+                    .await
+                    .map_err(|e| GarError::gc(format!("btrfs snapshot falhou: {e}")))
+            }
+            _ => Err(GarError::gc("btrfs não disponível ou src não é subvolume")),
+        }
+    })
 }
 
 fn cp_al_snapshot(src: &Path, dst: &str) -> Result<()> {
     let status = std::process::Command::new("cp")
         .args(["-al", &src.display().to_string(), dst])
         .status()?;
-    if !status.success() {
-        return Err(GarError::gc(format!(
+    if status.success() {
+        Ok(())
+    } else {
+        Err(GarError::gc(format!(
             "cp -al falhou: exit {}",
             status.code().unwrap_or(-1)
-        )));
+        )))
     }
-    Ok(())
 }
 
+/// Keep the `keep` newest `images-pre-gc-*` snapshots; delete the
+/// rest. Silently ignores per-entry failures.
 fn prune_snapshots(snapshots_root: &str, keep: u32) -> Result<()> {
-    let path = std::path::Path::new(snapshots_root);
+    let path = Path::new(snapshots_root);
     if !path.exists() {
         return Ok(());
     }
