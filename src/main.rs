@@ -5,18 +5,16 @@
 //! - `garos` (server operations, 1303 LOC in server/garos-cli.nix)
 //!
 //! Both legacy CLIs are kept as shims that delegate here for 6 months.
-
-pub mod cli;
-pub mod commands;
-pub mod config;
-pub mod error;
-pub mod output;
-pub mod services;
+//!
+//! Module wiring lives in `src/lib.rs`; this file is the binary
+//! entry point and only re-uses the library crate.
 
 use clap::Parser;
 
-use crate::cli::{Cli, Command};
-use crate::error::{GarError, Result};
+use gar::cli::{Cli, Command};
+use gar::commands;
+use gar::error::{GarError, Result};
+use gar::output;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -63,7 +61,7 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Command::Secrets(cmd) => commands::secrets::dispatch(cmd).await,
         Command::ProvisionHome(ref args) => commands::provision_home::run(args, cli.json),
         Command::GenerateCompletions { shell } => {
-            let mut app = <crate::cli::Cli as clap::CommandFactory>::command();
+            let mut app = <gar::cli::Cli as clap::CommandFactory>::command();
             let bin_name = app.get_name().to_string();
             clap_complete::generate(shell, &mut app, bin_name, &mut std::io::stdout());
             Ok(())
