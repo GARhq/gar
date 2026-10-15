@@ -36,8 +36,24 @@ pub const MIN_FREE_NIX_MB: u64 = 3072;
 /// Lock file used by `gar server update` to serialize concurrent updates.
 const UPDATE_LOCK_PATH: &str = "/run/gar-update.lock";
 
-/// Lock acquisition timeout (seconds) — matches `flock -w 60` semantics.
-const UPDATE_LOCK_TIMEOUT_SECS: u64 = 60;
+/// Lock acquisition timeout (seconds).
+///
+/// P0-5: bumped 60s → 1800s (30 min). `nh os test` pode levar 10-30 min em
+/// hardware lento, e 60s era alcançado com frequência (especialmente com
+/// parallelismo habilitado), fazendo o segundo operador a chegar
+/// erroneamente achar que o update anterior travou e rodar `gar server
+/// clean` (que destrói gerações) — perdendo o histórico que o rollback
+/// depende.
+///
+/// 30 min cobre o pior caso documentado de `nh os test` (cold cache +
+/// recompilação de muitos módulos NixOS) com folga.
+const UPDATE_LOCK_TIMEOUT_SECS: u64 = 1800;
+
+/// Intervalo de progresso enquanto o lock está sendo esperado. Cada
+/// `PROGRESS_INTERVAL_SECS` segundos, se o lock ainda não foi adquirido,
+/// logamos uma linha de status para que o operador saiba que o `gar` está
+/// vivo e esperando — não travado.
+const LOCK_PROGRESS_INTERVAL_SECS: u64 = 30;
 
 // ─── Update pipeline (steps are the unit of change) ────────────────────
 //
@@ -273,10 +289,18 @@ pub async fn cmd_update(
     }
 
     let lock_path = std::path::Path::new(UPDATE_LOCK_PATH);
-    global_lock::with_lock_timeout(
+    global_lock::with_lock_timeout_and_progress(
         lock_path,
         "server update",
         Duration::from_secs(UPDATE_LOCK_TIMEOUT_SECS),
+        Duration::from_secs(LOCK_PROGRESS_INTERVAL_SECS),
+        |elapsed| {
+            let remaining = UPDATE_LOCK_TIMEOUT_SECS.saturating_sub(elapsed.as_secs());
+            output::info(format!(
+                "aguardando lock global do update; tempo restante: {remaining}s (aguardando há {}s)...",
+                elapsed.as_secs()
+            ));
+        },
         || run_pipeline(&ctx),
     )?;
 
@@ -458,8 +482,17 @@ fn resolve_flake_path(cfg: &Config) -> Result<std::path::PathBuf> {
 /// Mensagem em pt-BR cita `gar server sync` (o caminho feliz de quem está
 /// editando localmente) e o fallback manual (`git commit`/`git stash`).
 fn check_flake_tree_clean(flake_path: &Path) -> Result<()> {
-    // 1. É um working tree Git? `rev-parse --is-inside-work-tree` é a
-    //    maneira canônica de checar sem efeitos colaterais.
+    // Um marcador `.git` no diretório ou em um ancestral identifica checkout
+    // normal/worktree. Paths sem marcador não-Git não precisam do executável.
+    let has_git_marker = flake_path
+        .ancestors()
+        .any(|ancestor| ancestor.join(".git").exists());
+    if !has_git_marker {
+        return Ok(());
+    }
+
+    // 1. Confirmar que o marcador é um working tree e não deixar variáveis
+    //    GIT_DIR/GIT_WORK_TREE externas redirecionarem a checagem.
     let probe = Command::new("git")
         .args([
             "-C",
@@ -467,17 +500,31 @@ fn check_flake_tree_clean(flake_path: &Path) -> Result<()> {
             "rev-parse",
             "--is-inside-work-tree",
         ])
-        .output();
-    let probe = match probe {
-        Ok(o) if o.status.success() => o,
-        // Sem `git` instalado, ou path não-git: prossegue sem checagem.
-        _ => return Ok(()),
-    };
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .map_err(|e| {
+            GarError::config(format!(
+                "não foi possível executar git para verificar {}: {e}; abortando `gar server update` por segurança",
+                flake_path.display()
+            ))
+        })?;
+    if !probe.status.success() {
+        return Err(GarError::config(format!(
+            "não foi possível verificar se {} pertence a um checkout Git (exit {}): {}; abortando `gar server update` por segurança",
+            flake_path.display(),
+            probe.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&probe.stderr).trim()
+        )));
+    }
     let inside = String::from_utf8_lossy(&probe.stdout)
         .trim()
         .eq_ignore_ascii_case("true");
     if !inside {
-        return Ok(());
+        return Err(GarError::config(format!(
+            "há metadados .git, mas {} não é reconhecido como working tree; abortando `gar server update` por segurança",
+            flake_path.display()
+        )));
     }
 
     // 2. Tem mudanças uncommitted? `status --porcelain` é estável e scriptável.
@@ -488,16 +535,17 @@ fn check_flake_tree_clean(flake_path: &Path) -> Result<()> {
             "status",
             "--porcelain",
         ])
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
         .output()
         .map_err(|e| GarError::config(format!("git status em {}: {e}", flake_path.display())))?;
     if !status.status.success() {
-        // git status com path inválido/ilegível — não bloqueia o update; só loga.
-        output::warn(format!(
-            "git status em {} falhou (exit {}); prosseguindo sem checagem de tree",
+        return Err(GarError::config(format!(
+            "não foi possível verificar a árvore Git em {} (exit {}): {}; abortando `gar server update` por segurança",
             flake_path.display(),
-            status.status.code().unwrap_or(-1)
-        ));
-        return Ok(());
+            status.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&status.stderr).trim()
+        )));
     }
     let dirty = String::from_utf8_lossy(&status.stdout);
     if dirty.trim().is_empty() {
@@ -697,6 +745,12 @@ mod tests {
         // The bash `garos-update` used /run/garos-update.lock; we keep a
         // gar- namespace file to avoid colliding with non-gar tools.
         assert_eq!(UPDATE_LOCK_PATH, "/run/gar-update.lock");
+    }
+
+    #[test]
+    fn update_lock_timeout_allows_slow_nixos_test() {
+        assert_eq!(UPDATE_LOCK_TIMEOUT_SECS, 1800);
+        assert_eq!(LOCK_PROGRESS_INTERVAL_SECS, 30);
     }
 
     #[test]
