@@ -189,33 +189,38 @@ pub fn clear_stale_staged_pointer(images_root: &Path) -> Result<usize> {
     let mut cleared = 0;
 
     // 1. Top-level staged
-    let top_staged = images_root.join("staged");
-    if top_staged.is_symlink() {
-        if let Some(target) = read_symlink_target(&top_staged)? {
-            tracing::warn!(target: "gar::rollback", "Removendo ponteiro staged residual: {}", target);
-            std::fs::remove_file(&top_staged)?;
-            cleared += 1;
-        }
-    }
+    cleared += remove_staged_link_if_stale(images_root, "staged", None)?;
 
     // 2. Per-channel staged
     for channel in [Channel::Generic, Channel::Lab, Channel::Rescue] {
         let name = channel_staged_pointer(channel);
-        let link = images_root.join(name);
-        if link.is_symlink() {
-            if let Some(target) = read_symlink_target(&link)? {
-                tracing::warn!(
-                    target: "gar::rollback",
-                    "Removendo ponteiro {} residual: {}",
-                    name,
-                    target
-                );
-                std::fs::remove_file(&link)?;
-                cleared += 1;
-            }
-        }
+        cleared += remove_staged_link_if_stale(images_root, name, Some(name))?;
     }
     Ok(cleared)
+}
+
+/// Remove a staged symlink if it exists. Returns 1 if removed, 0 otherwise.
+fn remove_staged_link_if_stale(
+    images_root: &Path,
+    link_name: &str,
+    log_prefix: Option<&str>,
+) -> Result<usize> {
+    let link = images_root.join(link_name);
+    if !link.is_symlink() {
+        return Ok(0);
+    }
+    let Some(target) = read_symlink_target(&link)? else {
+        return Ok(0);
+    };
+    let prefix = log_prefix.unwrap_or("staged");
+    tracing::warn!(
+        target: "gar::rollback",
+        "Removendo ponteiro {} residual: {}",
+        prefix,
+        target
+    );
+    std::fs::remove_file(&link)?;
+    Ok(1)
 }
 
 // -------- internal helpers --------
@@ -256,28 +261,17 @@ fn load_record(path: &Path) -> Result<RollbackLoadOutcome> {
         .and_then(|m| m.modified().ok())
         .map(DateTime::from);
 
-    let mut from = None;
-    let mut to = None;
-    let mut channel = None;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((k, v)) = line.split_once('=') {
-            match k.trim() {
-                "source" => from = Some(v.trim().to_string()),
-                "target" => to = Some(v.trim().to_string()),
-                "channel" => {
-                    let v = v.trim();
-                    channel = if v.is_empty() {
-                        None
-                    } else {
-                        Some(v.to_string())
-                    };
-                }
-                _ => {} // ignore unknown keys (forward compat)
+    let mut from: Option<String> = None;
+    let mut to: Option<String> = None;
+    let mut channel: Option<String> = None;
+    for (k, v) in content.lines().filter_map(parse_key_value) {
+        match k {
+            "source" => from = Some(v.into()),
+            "target" => to = Some(v.into()),
+            "channel" => {
+                channel = if v.is_empty() { None } else { Some(v.into()) };
             }
+            _ => {} // ignore unknown keys (forward compat)
         }
     }
 
@@ -294,6 +288,15 @@ fn load_record(path: &Path) -> Result<RollbackLoadOutcome> {
             to.as_deref().unwrap_or("")
         ))),
     }
+}
+
+/// Parse one `KEY=VALUE` line, trimming whitespace and ignoring comments.
+fn parse_key_value(line: &str) -> Option<(&str, &str)> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+    line.split_once('=').map(|(k, v)| (k.trim(), v.trim()))
 }
 
 fn remove_file_if_exists(path: &Path) -> Result<()> {
