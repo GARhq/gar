@@ -36,11 +36,8 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
-    // Collect pointers
-    let current = read_pointer(&cfg.images_root, "current");
-    let previous = read_pointer(&cfg.images_root, "previous");
-    let rescue = read_pointer(&cfg.images_root, "rescue");
-    let staged = read_pointer(&cfg.images_root, "staged");
+    // Live server pointers: which versions are current/previous/staged/rescue.
+    let pointers = Pointers::collect(&cfg.images_root);
 
     let mut rows: Vec<GenerationRow> = Vec::new();
 
@@ -56,32 +53,16 @@ pub async fn run() -> Result<()> {
         };
 
         let size = dir_size(&path);
-        let (timestamp, target, channel, hardware_class, status) = match manifest::read(&path) {
-            Ok(m) => (m.timestamp, m.target, m.channel, m.hardware_class, m.status),
-            Err(_) => {
-                // Manifest missing — show unknown
-                (
-                    "—".into(),
-                    "—".into(),
-                    "—".into(),
-                    "—".into(),
-                    Status::Inactive,
-                )
-            }
+        let m = manifest::read(&path).ok();
+        let (timestamp, target, channel, hardware_class, status) = match m {
+            Some(m) => (m.timestamp, m.target, m.channel, m.hardware_class, m.status),
+            None => manifest_unknown_row(),
         };
 
-        // Override status from pointers if present (more authoritative)
-        let status = if Some(&version) == current.as_ref() {
-            Status::Active
-        } else if Some(&version) == previous.as_ref() {
-            Status::Previous
-        } else if Some(&version) == staged.as_ref() {
-            Status::Staged
-        } else if Some(&version) == rescue.as_ref() {
-            Status::Rescue
-        } else {
-            status
-        };
+        // Pointers (current/previous/staged/rescue) are more authoritative
+        // than the manifest's own `status` field — they reflect what the
+        // server is actually serving right now.
+        let status = pointer_status(&version, &pointers).unwrap_or(status);
 
         rows.push(GenerationRow {
             version: version.clone(),
@@ -152,6 +133,61 @@ fn read_pointer(images_root: &Path, name: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Snapshot of the four top-level generation pointers.
+struct Pointers {
+    current: Option<String>,
+    previous: Option<String>,
+    staged: Option<String>,
+    rescue: Option<String>,
+}
+
+impl Pointers {
+    fn collect(images_root: &Path) -> Self {
+        Self {
+            current: read_pointer(images_root, "current"),
+            previous: read_pointer(images_root, "previous"),
+            staged: read_pointer(images_root, "staged"),
+            rescue: read_pointer(images_root, "rescue"),
+        }
+    }
+
+    /// Returns the most authoritative status for `version` based on which
+    /// pointer (if any) currently points to it. `None` means the version
+    /// is not pointed to by any of the live pointers — caller should fall
+    /// back to the manifest's own status.
+    fn status_for(&self, version: &str) -> Option<Status> {
+        if self.current.as_deref() == Some(version) {
+            Some(Status::Active)
+        } else if self.previous.as_deref() == Some(version) {
+            Some(Status::Previous)
+        } else if self.staged.as_deref() == Some(version) {
+            Some(Status::Staged)
+        } else if self.rescue.as_deref() == Some(version) {
+            Some(Status::Rescue)
+        } else {
+            None
+        }
+    }
+}
+
+/// Resolve a `Status` for `version` using the live pointers, falling back
+/// to the manifest's recorded status when the version is not currently
+/// pointed to.
+fn pointer_status(version: &str, pointers: &Pointers) -> Option<Status> {
+    pointers.status_for(version)
+}
+
+/// Placeholder row used when a `v*` directory has no readable manifest.
+fn manifest_unknown_row() -> (String, String, String, String, Status) {
+    (
+        "—".into(),
+        "—".into(),
+        "—".into(),
+        "—".into(),
+        Status::Inactive,
+    )
 }
 
 fn dir_size(path: &Path) -> String {

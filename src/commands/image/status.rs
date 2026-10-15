@@ -44,6 +44,24 @@ pub struct ChannelPointer {
     pub staged: Option<String>,
 }
 
+/// `(channel, current-pointer, previous-pointer, staged-pointer)` — the
+/// well-known per-channel symlinks rooted at `images_root`.
+const CHANNEL_POINTERS: &[(&str, &str, &str, &str)] = &[
+    (
+        "generic",
+        "current-generic",
+        "previous-generic",
+        "staged-generic",
+    ),
+    ("lab", "current-lab", "previous-lab", "staged-lab"),
+    (
+        "rescue",
+        "current-rescue",
+        "previous-rescue",
+        "staged-rescue",
+    ),
+];
+
 /// Run the status command.
 pub async fn run() -> Result<()> {
     let cfg = Config::from_env()?;
@@ -53,29 +71,15 @@ pub async fn run() -> Result<()> {
     let rescue = read_pointer(&cfg.images_root, "rescue");
     let staged = read_pointer(&cfg.images_root, "staged");
 
-    let channels = vec![
-        (
-            "generic",
-            "current-generic",
-            "previous-generic",
-            "staged-generic",
-        ),
-        ("lab", "current-lab", "previous-lab", "staged-lab"),
-        (
-            "rescue",
-            "current-rescue",
-            "previous-rescue",
-            "staged-rescue",
-        ),
-    ]
-    .into_iter()
-    .map(|(ch, cur, prev, stg)| ChannelPointer {
-        channel: ch.into(),
-        current: read_pointer(&cfg.images_root, cur),
-        previous: read_pointer(&cfg.images_root, prev),
-        staged: read_pointer(&cfg.images_root, stg),
-    })
-    .collect();
+    let channels: Vec<ChannelPointer> = CHANNEL_POINTERS
+        .iter()
+        .map(|(ch, cur, prev, stg)| ChannelPointer {
+            channel: (*ch).into(),
+            current: read_pointer(&cfg.images_root, cur),
+            previous: read_pointer(&cfg.images_root, prev),
+            staged: read_pointer(&cfg.images_root, stg),
+        })
+        .collect();
 
     let report = StatusReport {
         server_ip: cfg.server_ip.clone(),
@@ -141,15 +145,7 @@ pub async fn run() -> Result<()> {
     println!();
     for ch in &report.channels {
         if ch.current.is_some() || ch.previous.is_some() || ch.staged.is_some() {
-            if let Some(c) = &ch.current {
-                println!("  Canal {} current : {}", ch.channel, c);
-            }
-            if let Some(p) = &ch.previous {
-                println!("  Canal {} previous: {}", ch.channel, p);
-            }
-            if let Some(s) = &ch.staged {
-                println!("  Canal {} staged  : {}", ch.channel, s);
-            }
+            print_channel_pointers(ch);
         }
     }
 
@@ -168,6 +164,19 @@ fn read_pointer(images_root: &Path, name: &str) -> Option<String> {
             .and_then(|t| t.file_name().map(|n| n.to_string_lossy().into_owned()))
     } else {
         None
+    }
+}
+
+/// Render the three per-channel pointer lines (current / previous /
+/// staged) using a single table-driven pass instead of three
+/// open-coded `if let Some(...)` blocks.
+fn print_channel_pointers(ch: &ChannelPointer) {
+    const POINTER_LABELS: &[&str] = &["current", "previous", "staged"];
+    let slots: [&Option<String>; 3] = [&ch.current, &ch.previous, &ch.staged];
+    for (slot, label) in slots.iter().zip(POINTER_LABELS.iter()) {
+        if let Some(v) = slot.as_ref() {
+            println!("  Canal {:<7} {}: {}", ch.channel, label, v);
+        }
     }
 }
 
