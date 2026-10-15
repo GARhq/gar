@@ -12,6 +12,10 @@ use crate::config::Config;
 use crate::error::Result;
 use crate::output;
 
+const IMAGE_POINTERS: [&str; 4] = ["current", "previous", "rescue", "staged"];
+const CHANNELS: [&str; 3] = ["generic", "lab", "rescue"];
+const CHANNEL_POINTER_PREFIXES: [&str; 3] = ["current-", "previous-", "staged-"];
+
 #[derive(Debug, Serialize)]
 pub struct DoctorReport {
     pub checks: Vec<Check>,
@@ -35,19 +39,34 @@ pub async fn run() -> Result<()> {
     let skip_http = std::env::var("GAR_SKIP_HTTP_CHECKS").as_deref() == Ok("1");
 
     let mut checks = Vec::new();
+    collect_infra_checks(&cfg, &mut checks, skip_services, skip_http);
+    collect_integrity_checks(&cfg, &mut checks);
 
-    // Services
-    for svc in &["dnsmasq", "nginx", "nfs-server"] {
+    let (report, fail) = tally(checks);
+    render(&cfg, &report, fail);
+
+    if fail > 0 {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn collect_infra_checks(
+    cfg: &Config,
+    checks: &mut Vec<Check>,
+    skip_services: bool,
+    skip_http: bool,
+) {
+    for svc in ["dnsmasq", "nginx", "nfs-server"] {
         checks.push(check_service(svc, skip_services));
     }
 
-    // Directories
     checks.push(check_dir(&cfg.data_root, "data dir"));
     checks.push(check_dir(&cfg.images_root, "images dir"));
     checks.push(check_dir(&cfg.data_root.join("home"), "home dir"));
     checks.push(check_dir(&cfg.http_root, "http root"));
 
-    // TFTP / iPXE files
     checks.push(check_file(
         &cfg.tftp_root.join("EFI/BOOT/BOOTX64.EFI"),
         "BOOTX64.EFI",
@@ -66,17 +85,15 @@ pub async fn run() -> Result<()> {
         "rescue.ipxe",
     ));
 
-    // Image pointers
-    for ptr in &["current", "previous", "rescue", "staged"] {
+    for ptr in IMAGE_POINTERS {
         let path = cfg.images_root.join(ptr);
         if path.is_symlink() {
             checks.push(check_symlink(&path, &format!("{} link", ptr)));
         }
     }
 
-    // Channel pointers
-    for ch in &["generic", "lab", "rescue"] {
-        for prefix in &["current-", "previous-", "staged-"] {
+    for ch in CHANNELS {
+        for prefix in CHANNEL_POINTER_PREFIXES {
             let name = format!("{}{}", prefix, ch);
             let path = cfg.images_root.join(&name);
             if path.is_symlink() {
@@ -85,9 +102,8 @@ pub async fn run() -> Result<()> {
         }
     }
 
-    // HTTP endpoints
     if !skip_http {
-        for (path, label) in &[
+        for (path, label) in [
             ("boot.ipxe", "http boot"),
             ("current.ipxe", "http current"),
             ("netboot/current/manifest.json", "http manifest"),
@@ -97,17 +113,16 @@ pub async fn run() -> Result<()> {
         }
     }
 
-    // Active manifest count (should be exactly 1)
     checks.push(check_active_manifest_count(&cfg.images_root));
+}
 
-    // K-2026-10-06: deeper integrity checks (artifact-level)
+fn collect_integrity_checks(cfg: &Config, checks: &mut Vec<Check>) {
     if let Some(current_dir) = current_build_dir(&cfg.images_root) {
         checks.push(check_manifest_checksum_kernel(&current_dir));
         checks.push(check_manifest_checksum_initrd(&current_dir));
         checks.push(check_manifest_signature(&current_dir, &cfg.flake_path));
         checks.push(check_public_key_match(&cfg.flake_path));
     } else {
-        // No current build → skip integrity checks (degraded)
         for name in [
             "manifest-checksum-kernel",
             "manifest-checksum-initrd",
@@ -121,47 +136,49 @@ pub async fn run() -> Result<()> {
             });
         }
     }
-    checks.push(check_http_serve_content(&cfg));
+    checks.push(check_http_serve_content(cfg));
+}
 
-    // Tally
+fn tally(checks: Vec<Check>) -> (DoctorReport, usize) {
     let ok = checks.iter().filter(|c| c.status == "OK").count();
     let fail = checks.iter().filter(|c| c.status == "FAIL").count();
     let skipped = checks.iter().filter(|c| c.status == "SKIP").count();
-
-    let report = DoctorReport {
-        checks,
-        ok,
+    (
+        DoctorReport {
+            checks,
+            ok,
+            fail,
+            skipped,
+        },
         fail,
-        skipped,
-    };
+    )
+}
 
+fn render(cfg: &Config, report: &DoctorReport, fail: usize) {
     if cfg.json_output {
-        output::json(&report)?;
+        output::json(report).ok();
+        return;
+    }
+    output::section("GAR Image Health Check");
+    println!();
+    for c in &report.checks {
+        print_check(c);
+    }
+    println!();
+    if fail == 0 {
+        output::ok(format!("GAR server healthy ({} OK)", report.ok));
     } else {
-        output::section("GAR Image Health Check");
+        output::err(format!(
+            "GAR server has issues ({} FAIL, {} OK)",
+            fail, report.ok
+        ));
         println!();
-        for c in &report.checks {
-            print_check(c);
-        }
-        println!();
-        if fail == 0 {
-            output::ok(format!("GAR server healthy ({} OK)", ok));
-        } else {
-            output::err(format!("GAR server has issues ({} FAIL, {} OK)", fail, ok));
-            println!();
-            println!("Dicas:");
-            println!("  - Verifique serviços: systemctl status dnsmasq nginx nfs-server");
-            println!("  - Execute: gar image list");
-            println!("  - Execute: gar image status");
-            println!("  - Corrija qualquer divergência antes de promover nova geração");
-        }
+        println!("Dicas:");
+        println!("  - Verifique serviços: systemctl status dnsmasq nginx nfs-server");
+        println!("  - Execute: gar image list");
+        println!("  - Execute: gar image status");
+        println!("  - Corrija qualquer divergência antes de promover nova geração");
     }
-
-    if fail > 0 {
-        std::process::exit(1);
-    }
-
-    Ok(())
 }
 
 fn check_service(name: &str, skip: bool) -> Check {
@@ -355,6 +372,15 @@ fn check_manifest_checksum_initrd(image_path: &Path) -> Check {
     )
 }
 
+/// Resolve the runtime keys directory: honor `GAR_KEYS_DIR` if set
+/// and non-empty, otherwise fall back to the well-known default.
+fn keys_dir() -> std::path::PathBuf {
+    match std::env::var("GAR_KEYS_DIR") {
+        Ok(v) if !v.is_empty() => std::path::PathBuf::from(v),
+        _ => std::path::PathBuf::from("/var/lib/garos/keys"),
+    }
+}
+
 /// Verify Ed25519 signature of manifest against `keys/garos.pub`.
 ///
 /// `flake_path` is currently unused (the keys directory is the source
@@ -363,15 +389,7 @@ fn check_manifest_checksum_initrd(image_path: &Path) -> Check {
 /// (e.g. read the expected public key from the flake) easier.
 fn check_manifest_signature(image_path: &Path, flake_path: &Path) -> Check {
     let _ = flake_path; // reserved for future use
-    let keys_dir = if let Ok(env) = std::env::var("GAR_KEYS_DIR") {
-        if !env.is_empty() {
-            std::path::PathBuf::from(env)
-        } else {
-            std::path::PathBuf::from("/var/lib/garos/keys")
-        }
-    } else {
-        std::path::PathBuf::from("/var/lib/garos/keys")
-    };
+    let keys_dir = keys_dir();
     if !keys_dir.join("garos.key").is_file() {
         return Check {
             name: "manifest-signature".into(),
@@ -403,15 +421,7 @@ fn check_manifest_signature(image_path: &Path, flake_path: &Path) -> Check {
 /// manifests signed with the new key.
 fn check_public_key_match(flake_path: &Path) -> Check {
     let pinned = flake_path.join("client/storage/garos.pub");
-    let runtime = if let Ok(env) = std::env::var("GAR_KEYS_DIR") {
-        if !env.is_empty() {
-            std::path::PathBuf::from(env).join("garos.pub")
-        } else {
-            std::path::PathBuf::from("/var/lib/garos/keys/garos.pub")
-        }
-    } else {
-        std::path::PathBuf::from("/var/lib/garos/keys/garos.pub")
-    };
+    let runtime = keys_dir().join("garos.pub");
     let pinned_bytes = match std::fs::read(&pinned) {
         Ok(b) => b,
         Err(e) => {
