@@ -5,7 +5,6 @@
 
 use std::path::Path;
 
-use owo_colors::OwoColorize;
 use serde::Serialize;
 
 use crate::config::Config;
@@ -159,11 +158,19 @@ fn render(cfg: &Config, report: &DoctorReport, fail: usize) {
         output::json(report).ok();
         return;
     }
-    output::section("GAR Image Health Check");
-    println!();
-    for c in &report.checks {
-        print_check(c);
-    }
+    output::header("GAR Image Health Check");
+    let rows: Vec<Vec<String>> = report
+        .checks
+        .iter()
+        .map(|c| {
+            vec![
+                c.name.clone(),
+                status_label(&c.status).to_string(),
+                c.detail.clone().unwrap_or_default(),
+            ]
+        })
+        .collect();
+    output::table(&["CHECK", "STATUS", "DETAIL"], &rows);
     println!();
     if fail == 0 {
         output::ok(format!("GAR server healthy ({} OK)", report.ok));
@@ -173,11 +180,25 @@ fn render(cfg: &Config, report: &DoctorReport, fail: usize) {
             fail, report.ok
         ));
         println!();
-        println!("Dicas:");
-        println!("  - Verifique serviços: systemctl status dnsmasq nginx nfs-server");
-        println!("  - Execute: gar image list");
-        println!("  - Execute: gar image status");
-        println!("  - Corrija qualquer divergência antes de promover nova geração");
+        output::panel(
+            "Dicas",
+            &[
+                "Verifique serviços: systemctl status dnsmasq nginx nfs-server".into(),
+                "Execute: gar image list".into(),
+                "Execute: gar image status".into(),
+                "Corrija qualquer divergência antes de promover nova geração".into(),
+            ],
+        );
+    }
+}
+
+/// Compact label used inside the `STATUS` column.
+fn status_label(status: &str) -> &str {
+    match status {
+        "OK" => "✓ OK",
+        "FAIL" => "✗ FAIL",
+        "SKIP" => "▲ SKIP",
+        other => other,
     }
 }
 
@@ -554,21 +575,6 @@ fn short_sha(bytes: &[u8]) -> String {
     let mut h = DefaultHasher::new();
     bytes.hash(&mut h);
     format!("{:016x}", h.finish())
-}
-
-fn print_check(c: &Check) {
-    let status_colored = match c.status.as_str() {
-        "OK" => "OK".green().bold().to_string(),
-        "FAIL" => "FAIL".red().bold().to_string(),
-        "SKIP" => "SKIP".yellow().to_string(),
-        _ => c.status.dimmed().to_string(),
-    };
-    let label_colored = c.name.bold();
-    if let Some(detail) = &c.detail {
-        println!("  {:<28} {}  ({})", label_colored, status_colored, detail);
-    } else {
-        println!("  {:<28} {}", label_colored, status_colored);
-    }
 }
 
 #[cfg(test)]
