@@ -1,3 +1,21 @@
+## [v0.3.0] - 2026-10-15
+
+### Added
+- **cli(output)**: design system consistente para mensagens, tabelas, painéis e JSON, migrado para os comandos de server, image, client, user, group e branding.
+- **server(update)**: espera pelo lock global por até 30 minutos, informa o tempo restante a cada 30 segundos e identifica o timeout ao expirar.
+
+### Fixed
+- **server(health)**: atualiza os serviços críticos para Caddy, dnsmasq, Redis/JuiceFS, MinIO e serviços de controle GAROS.
+- **server(update)**: aborta antes de `nix flake update` se o checkout Git estiver sujo ou se não for possível verificar seu estado; sugere `gar server sync` ou commit/stash.
+- **image(doctor)**: remove referências obsoletas a nginx e nfs-server dos health checks.
+- **client(list)**: remove a mensagem stale de “Phase 0.5” do estado vazio do inventário.
+
+### Refactored
+- **server(update)**: descreve o pipeline por etapas declarativas compartilhadas pelo dry-run e pela execução.
+- **image**: refatora build, GC, listagem/status e descoberta de gerações; separa a biblioteca Rust do entrypoint CLI.
+
+---
+
 ## [v0.2.8] - 2026-10-14
 
 ### Refactored

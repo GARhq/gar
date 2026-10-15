@@ -31,7 +31,7 @@ rustPlatform.buildRustPackage {
   # here means the nix build silently produces binaries with the wrong
   # version string. CI / pre-release hooks should compare this to the
   # version in ./Cargo.toml and fail if they diverge.
-  version = "0.2.5";
+  version = "0.3.0";
   src = ./.;
 
   cargoLock = {
