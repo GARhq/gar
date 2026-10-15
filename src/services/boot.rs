@@ -202,39 +202,19 @@ pub fn write_channel_ipxe(
         format!("current-{}", channel.as_str())
     };
 
+    let channel_str = channel.as_str();
     let content = if !build_id.is_empty() && !init_path.is_empty() {
-        format!(
-            r#"#!ipxe
-
-set build_id {build_id}
-isset ${{ip}} || dhcp
-echo Booting GAROS {channel_str} (${{build_id}})...
-kernel https://{server_ip}:{http_port}/netboot/{boot_dir}/bzImage init={init_path} ip=dhcp garos.primaryNicMac=${{net0/mac}} garos.server_url=https://{server_ip}:{http_port} juicefs.meta=${{juicefs_meta}} {kernel_params}
-initrd https://{server_ip}:{http_port}/netboot/{boot_dir}/initrd
-boot || goto failed
-
-:failed
-echo Boot {channel_str} falhou. Indo para shell...
-shell
-"#,
-            build_id = build_id,
-            channel_str = channel.as_str(),
-            server_ip = server_ip,
-            http_port = http_port,
-            boot_dir = boot_dir,
-            init_path = init_path,
-            kernel_params = kernel_params,
+        render_active_ipxe(
+            channel_str,
+            &boot_dir,
+            build_id,
+            init_path,
+            kernel_params,
+            server_ip,
+            http_port,
         )
     } else {
-        format!(
-            r#"#!ipxe
-
-echo Nenhuma geracao ativa disponivel para o canal {channel_str}.
-echo Publique com: ragc switch --channel {channel_str}
-shell
-"#,
-            channel_str = channel.as_str(),
-        )
+        render_empty_ipxe(channel_str)
     };
 
     if let Some(parent) = script_path.parent() {
@@ -370,49 +350,27 @@ reboot
     )?;
 
     // current.ipxe — uses the literal "current" boot dir.
-    let current_ipxe = format!(
-        r#"#!ipxe
-
-set build_id {current_ver}
-isset ${{ip}} || dhcp
-echo Booting GAROS current (${{build_id}})...
-kernel https://{server_ip}:{http_port}/netboot/current/bzImage init={current_init} ip=dhcp garos.primaryNicMac=${{net0/mac}} garos.server_url=https://{server_ip}:{http_port} juicefs.meta=${{juicefs_meta}} {current_params}
-initrd https://{server_ip}:{http_port}/netboot/current/initrd
-boot || goto failed
-
-:failed
-echo Boot falhou. Indo para shell...
-shell
-"#,
-        current_ver = current_ver,
-        current_init = current_init,
-        current_params = current_params,
-        server_ip = cfg.server_ip,
-        http_port = cfg.http_port,
+    let current_ipxe = render_active_ipxe(
+        "current",
+        "current",
+        current_ver,
+        current_init,
+        &current_params,
+        &cfg.server_ip,
+        cfg.http_port,
     );
     fs::write(bundle_dir.join("current.ipxe"), current_ipxe)?;
 
     // rescue.ipxe — only meaningful when rescue_ver AND rescue_init are set.
     let rescue_ipxe = if !rescue_ver.is_empty() && !rescue_init.is_empty() {
-        format!(
-            r#"#!ipxe
-
-set build_id {rescue_ver}
-isset ${{ip}} || dhcp
-echo Booting GAROS rescue (${{build_id}})...
-kernel https://{server_ip}:{http_port}/netboot/rescue/bzImage init={rescue_init} ip=dhcp garos.primaryNicMac=${{net0/mac}} garos.server_url=https://{server_ip}:{http_port} juicefs.meta=${{juicefs_meta}} {rescue_params}
-initrd https://{server_ip}:{http_port}/netboot/rescue/initrd
-boot || goto failed
-
-:failed
-echo Boot rescue falhou. Indo para shell...
-shell
-"#,
-            rescue_ver = rescue_ver,
-            rescue_init = rescue_init,
-            rescue_params = rescue_params,
-            server_ip = cfg.server_ip,
-            http_port = cfg.http_port,
+        render_active_ipxe(
+            "rescue",
+            "rescue",
+            rescue_ver,
+            rescue_init,
+            &rescue_params,
+            &cfg.server_ip,
+            cfg.http_port,
         )
     } else {
         "#!ipxe\n\necho Nenhuma geracao de rescue disponivel.\nshell\n".to_string()
@@ -435,74 +393,38 @@ pub fn validate_boot_bundle(bundle_dir: &Path, current_ver: &str, rescue_ver: &s
             return Coherence::Missing((*file).to_string());
         }
     }
-    match ipxe_declared_value(&bundle_dir.join("boot.ipxe"), "current_build_id") {
-        Some(v) if v == current_ver => {}
-        Some(actual) => {
-            return Coherence::Diverged {
-                file: "boot.ipxe".into(),
-                expected: current_ver.into(),
-                actual,
-            };
-        }
-        None => {
-            return Coherence::Diverged {
-                file: "boot.ipxe".into(),
-                expected: current_ver.into(),
-                actual: "<unset>".into(),
-            };
-        }
+    if let Some(coh) = validate_ipxe_build_id(
+        &bundle_dir.join("boot.ipxe"),
+        "current_build_id",
+        "boot.ipxe",
+        current_ver,
+    ) {
+        return coh;
     }
-    match ipxe_declared_value(&bundle_dir.join("current.ipxe"), "build_id") {
-        Some(v) if v == current_ver => {}
-        Some(actual) => {
-            return Coherence::Diverged {
-                file: "current.ipxe".into(),
-                expected: current_ver.into(),
-                actual,
-            };
-        }
-        None => {
-            return Coherence::Diverged {
-                file: "current.ipxe".into(),
-                expected: current_ver.into(),
-                actual: "<unset>".into(),
-            };
-        }
+    if let Some(coh) = validate_ipxe_build_id(
+        &bundle_dir.join("current.ipxe"),
+        "build_id",
+        "current.ipxe",
+        current_ver,
+    ) {
+        return coh;
     }
     if !rescue_ver.is_empty() {
-        match ipxe_declared_value(&bundle_dir.join("boot.ipxe"), "rescue_build_id") {
-            Some(v) if v == rescue_ver => {}
-            Some(actual) => {
-                return Coherence::Diverged {
-                    file: "boot.ipxe (rescue_build_id)".into(),
-                    expected: rescue_ver.into(),
-                    actual,
-                };
-            }
-            None => {
-                return Coherence::Diverged {
-                    file: "boot.ipxe (rescue_build_id)".into(),
-                    expected: rescue_ver.into(),
-                    actual: "<unset>".into(),
-                };
-            }
+        if let Some(coh) = validate_ipxe_build_id(
+            &bundle_dir.join("boot.ipxe"),
+            "rescue_build_id",
+            "boot.ipxe (rescue_build_id)",
+            rescue_ver,
+        ) {
+            return coh;
         }
-        match ipxe_declared_value(&bundle_dir.join("rescue.ipxe"), "build_id") {
-            Some(v) if v == rescue_ver => {}
-            Some(actual) => {
-                return Coherence::Diverged {
-                    file: "rescue.ipxe".into(),
-                    expected: rescue_ver.into(),
-                    actual,
-                };
-            }
-            None => {
-                return Coherence::Diverged {
-                    file: "rescue.ipxe".into(),
-                    expected: rescue_ver.into(),
-                    actual: "<unset>".into(),
-                };
-            }
+        if let Some(coh) = validate_ipxe_build_id(
+            &bundle_dir.join("rescue.ipxe"),
+            "build_id",
+            "rescue.ipxe",
+            rescue_ver,
+        ) {
+            return coh;
         }
     }
     Coherence::Coherent
@@ -538,30 +460,20 @@ pub fn validate_channel_boot_coherence(
     channel: Channel,
     expected_ver: &str,
 ) -> Coherence {
-    let script_path = http_root.join(format!("{}.ipxe", channel.as_str()));
+    let file_label = format!("{}.ipxe", channel.as_str());
+    let script_path = http_root.join(&file_label);
     // Mirror bash: the file check runs BEFORE the expected_ver early
     // return. If the script is missing we always report Missing — even
     // when the expected version is empty. The early return applies only
     // when the file exists and the expected version is unset.
     if !script_path.is_file() {
-        return Coherence::Missing(format!("{}.ipxe", channel.as_str()));
+        return Coherence::Missing(file_label);
     }
     if expected_ver.is_empty() {
         return Coherence::Coherent;
     }
-    match ipxe_declared_value(&script_path, "build_id") {
-        Some(v) if v == expected_ver => Coherence::Coherent,
-        Some(actual) => Coherence::Diverged {
-            file: format!("{}.ipxe", channel.as_str()),
-            expected: expected_ver.into(),
-            actual,
-        },
-        None => Coherence::Diverged {
-            file: format!("{}.ipxe", channel.as_str()),
-            expected: expected_ver.into(),
-            actual: "<unset>".into(),
-        },
-    }
+    validate_ipxe_build_id(&script_path, "build_id", &file_label, expected_ver)
+        .unwrap_or(Coherence::Coherent)
 }
 
 /// Validate the boot coherence for the *current* build. Checks
@@ -581,27 +493,21 @@ pub fn validate_boot_coherence(
     current_ver: &str,
     expected_http_manifest: Option<&str>,
 ) -> Coherence {
-    if let Some(actual) = ipxe_declared_value(&http_root.join("boot.ipxe"), "current_build_id") {
-        if actual != current_ver {
-            return Coherence::Diverged {
-                file: "boot.ipxe".into(),
-                expected: current_ver.into(),
-                actual,
-            };
-        }
-    } else {
-        return Coherence::Missing("boot.ipxe current_build_id".into());
+    if let Some(coh) = validate_ipxe_build_id(
+        &http_root.join("boot.ipxe"),
+        "current_build_id",
+        "boot.ipxe",
+        current_ver,
+    ) {
+        return coh;
     }
-    if let Some(actual) = ipxe_declared_value(&http_root.join("current.ipxe"), "build_id") {
-        if actual != current_ver {
-            return Coherence::Diverged {
-                file: "current.ipxe".into(),
-                expected: current_ver.into(),
-                actual,
-            };
-        }
-    } else {
-        return Coherence::Missing("current.ipxe build_id".into());
+    if let Some(coh) = validate_ipxe_build_id(
+        &http_root.join("current.ipxe"),
+        "build_id",
+        "current.ipxe",
+        current_ver,
+    ) {
+        return coh;
     }
     if let Some(body) = expected_http_manifest {
         if !body.is_empty() {
@@ -649,19 +555,13 @@ pub fn validate_rescue_coherence(http_root: &Path, rescue_ver: &str) -> Coherenc
     if rescue_ver.is_empty() {
         return Coherence::Coherent;
     }
-    match ipxe_declared_value(&http_root.join("rescue.ipxe"), "build_id") {
-        Some(v) if v == rescue_ver => Coherence::Coherent,
-        Some(actual) => Coherence::Diverged {
-            file: "rescue.ipxe".into(),
-            expected: rescue_ver.into(),
-            actual,
-        },
-        None => Coherence::Diverged {
-            file: "rescue.ipxe".into(),
-            expected: rescue_ver.into(),
-            actual: "<unset>".into(),
-        },
-    }
+    validate_ipxe_build_id(
+        &http_root.join("rescue.ipxe"),
+        "build_id",
+        "rescue.ipxe",
+        rescue_ver,
+    )
+    .unwrap_or(Coherence::Coherent)
 }
 
 /// Helper: substitute empty strings with `none` for iPXE variable defaults.
@@ -680,6 +580,81 @@ fn empty_to_none(s: &str) -> &str {
 fn manifest_channel_field(manifest_path: &Path) -> Option<String> {
     let content = fs::read_to_string(manifest_path).ok()?;
     extract_first_json_string(&content, "channel")
+}
+
+/// Render the active-boot iPXE template shared by channel scripts,
+/// current.ipxe and rescue.ipxe.
+///
+/// `boot_dir` is the directory name in `netboot/` (e.g. `current-generic`,
+/// `current`, `rescue`). `channel_str` is the human-readable channel name
+/// used in log messages.
+fn render_active_ipxe(
+    channel_str: &str,
+    boot_dir: &str,
+    build_id: &str,
+    init_path: &str,
+    kernel_params: &str,
+    server_ip: &str,
+    http_port: u16,
+) -> String {
+    format!(
+        r#"#!ipxe
+
+set build_id {build_id}
+isset ${{ip}} || dhcp
+echo Booting GAROS {channel_str} (${{build_id}})...
+kernel https://{server_ip}:{http_port}/netboot/{boot_dir}/bzImage init={init_path} ip=dhcp garos.primaryNicMac=${{net0/mac}} garos.server_url=https://{server_ip}:{http_port} juicefs.meta=${{juicefs_meta}} {kernel_params}
+initrd https://{server_ip}:{http_port}/netboot/{boot_dir}/initrd
+boot || goto failed
+
+:failed
+echo Boot {channel_str} falhou. Indo para shell...
+shell
+"#,
+        build_id = build_id,
+        channel_str = channel_str,
+        server_ip = server_ip,
+        http_port = http_port,
+        boot_dir = boot_dir,
+        init_path = init_path,
+        kernel_params = kernel_params,
+    )
+}
+
+/// Render the empty-boot iPXE template used when no generation is active.
+fn render_empty_ipxe(channel_str: &str) -> String {
+    format!(
+        r#"#!ipxe
+
+echo Nenhuma geracao ativa disponivel para o canal {channel_str}.
+echo Publique com: ragc switch --channel {channel_str}
+shell
+"#,
+        channel_str = channel_str,
+    )
+}
+
+/// Validate that `script_path` declares `variable` with `expected` value.
+/// Returns `None` when coherent, otherwise a `Coherence` describing the failure.
+fn validate_ipxe_build_id(
+    script_path: &Path,
+    variable: &str,
+    file_label: &str,
+    expected: &str,
+) -> Option<Coherence> {
+    match ipxe_declared_value(script_path, variable) {
+        Some(v) if v == expected => None,
+        Some(actual) => Some(Coherence::Diverged {
+            file: file_label.into(),
+            expected: expected.into(),
+            actual,
+        }),
+        None => Some(Coherence::Diverged {
+            file: file_label.into(),
+            expected: expected.into(),
+            actual: "<unset>".into(),
+        }),
+    }
 }
 
 /// Public helper: read the `system_path` field from a manifest.json.
