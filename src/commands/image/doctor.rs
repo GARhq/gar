@@ -57,7 +57,7 @@ fn collect_infra_checks(
     skip_services: bool,
     skip_http: bool,
 ) {
-    for svc in ["dnsmasq", "nginx", "nfs-server"] {
+    for svc in ["dnsmasq", "caddy", "redis-juicefs-meta", "minio"] {
         checks.push(check_service(svc, skip_services));
     }
 
@@ -183,7 +183,8 @@ fn render(cfg: &Config, report: &DoctorReport, fail: usize) {
         output::panel(
             "Dicas",
             &[
-                "Verifique serviços: systemctl status dnsmasq nginx nfs-server".into(),
+                "Verifique serviços: systemctl status dnsmasq caddy redis-juicefs-meta minio"
+                    .into(),
                 "Execute: gar image list".into(),
                 "Execute: gar image status".into(),
                 "Corrija qualquer divergência antes de promover nova geração".into(),
@@ -480,9 +481,9 @@ fn check_public_key_match(flake_path: &Path) -> Check {
 }
 
 /// GET the current bzImage via HTTP and confirm the body matches the
-/// file on disk. Catches the case where nginx is serving stale content
-/// (e.g. after a `mv` that didn't refresh the symlink, or a
-/// worker process with cached file descriptor).
+/// file on disk. Catches the case where the web server (caddy) is
+/// serving stale content (e.g. after a `mv` that didn't refresh the
+/// symlink, or a worker process with cached file descriptor).
 fn check_http_serve_content(cfg: &Config) -> Check {
     let url = format!(
         "http://{}:{}/netboot/current/bzImage",
@@ -523,7 +524,7 @@ fn check_http_serve_content(cfg: &Config) -> Check {
         fail(
             "http-serve-content",
             format!(
-                "divergente: local={} remote={} (nginx pode estar servindo stale)",
+                "divergente: local={} remote={} (caddy pode estar servindo stale)",
                 &local_sha[..12],
                 &remote_sha[..12.min(remote_sha.len())]
             ),
