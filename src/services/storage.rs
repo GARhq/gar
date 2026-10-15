@@ -133,9 +133,9 @@ pub fn ensure_generation_dir(generation_dir: &Path, generation_id: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
     use std::path::PathBuf;
-    use serial_test::serial;
 
     /// RAII guard for `std::env::set_var` in tests. Restores the previous
     /// value on drop (or removes the var if it was unset before). Prevents
@@ -174,11 +174,12 @@ mod tests {
     }
 
     fn make_cfg(images_root: PathBuf, http_root: PathBuf, data_root: PathBuf) -> Config {
-        let mut cfg = Config::default();
-        cfg.images_root = images_root;
-        cfg.http_root = http_root;
-        cfg.data_root = data_root;
-        cfg
+        Config {
+            images_root,
+            http_root,
+            data_root,
+            ..Config::default()
+        }
     }
 
     #[test]

@@ -76,7 +76,7 @@ fn test_root_markdown_allowlist() {
     // everything else belongs in `docs/` or is an intentional file we
     // list explicitly below.
     let root = repo_root();
-    let allowed_mds = vec!["README.md", "MIGRATION.md"];
+    let allowed_mds = ["README.md", "MIGRATION.md"];
 
     let files = list_files_in_dir(&root, Some(1), false);
     for file in files {
@@ -255,19 +255,18 @@ fn test_no_temporary_artifacts() {
 
     for file in files {
         let name = file.file_name().unwrap().to_string_lossy().into_owned();
-        if name == "result"
+        if (name == "result"
             || name.starts_with("result-")
             || name.ends_with(".log")
             || name.ends_with(".tmp")
             || name.ends_with(".bak")
-            || name == "nohup.out"
+            || name == "nohup.out")
+            && !file.to_string_lossy().contains(".git")
         {
-            if !file.to_string_lossy().contains(".git") {
-                panic!(
-                    "Artefato temporário encontrado no checkout ativo do crate: {:?}",
-                    file
-                );
-            }
+            panic!(
+                "Artefato temporário encontrado no checkout ativo do crate: {:?}",
+                file
+            );
         }
     }
 }

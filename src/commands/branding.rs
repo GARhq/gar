@@ -103,10 +103,6 @@ fn render_check(c: &branding::BrandingCheck) {
 mod tests {
     use super::*;
 
-    fn default_flags() -> DoctorFlags {
-        DoctorFlags::default()
-    }
-
     #[test]
     fn test_summary_serializes_with_healthy_flag() {
         let r = branding::collect_report(&Config::default());

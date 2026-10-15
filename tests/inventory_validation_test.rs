@@ -24,7 +24,7 @@ fn test_detect_duplicate_mac() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&[
+        .args([
             "server",
             "check",
             "--inventory",
@@ -46,7 +46,7 @@ fn test_detect_duplicate_hostname() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&[
+        .args([
             "server",
             "check",
             "--inventory",
@@ -68,7 +68,7 @@ fn test_detect_duplicate_ip() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&[
+        .args([
             "server",
             "check",
             "--inventory",
@@ -85,7 +85,7 @@ fn test_empty_inventory_forbidden_by_default() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&[
+        .args([
             "server",
             "check",
             "--inventory",
@@ -102,7 +102,7 @@ fn test_empty_inventory_allowed_explicitly() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&[
+        .args([
             "server",
             "check",
             "--inventory",
@@ -129,7 +129,7 @@ fn test_channel_release_track_mismatch() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&[
+        .args([
             "server",
             "check",
             "--inventory",
@@ -158,7 +158,7 @@ fn test_profile_client_profile_mismatch() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&[
+        .args([
             "server",
             "check",
             "--inventory",
@@ -188,7 +188,7 @@ fn test_semantic_combo_mismatch() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&[
+        .args([
             "server",
             "check",
             "--inventory",
@@ -214,7 +214,7 @@ fn test_uefi_https_reserved() {
     let file = create_temp_inventory(content);
     let mut cmd = Command::cargo_bin("gar").unwrap();
     cmd.env("GAR_FLAKE_PATH", get_garos_dir())
-        .args(&[
+        .args([
             "server",
             "check",
             "--inventory",

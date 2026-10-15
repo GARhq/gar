@@ -115,20 +115,20 @@ pub fn validate_build_artifacts(image_path: &Path) -> Result<()> {
     // key signs manifests that every existing client will reject at boot.
     // The flake path is resolved via `find_flake_root` walking up from the
     // images_root so we don't require a hard-coded /etc/garos.
-    let pinned = match crate::services::manifest::find_flake_root(
-        image_path,
-        None,
-    ) {
+    let pinned = match crate::services::manifest::find_flake_root(image_path, None) {
         Some(root) => root.join("client/storage/garos.pub"),
         None => image_path.join("garos.pub.pinned"), // sentinel that won't exist → fail
     };
-    match (std::fs::read(&pinned), std::fs::read(keys_dir.join("garos.pub"))) {
+    match (
+        std::fs::read(&pinned),
+        std::fs::read(keys_dir.join("garos.pub")),
+    ) {
         (Ok(p), Ok(r)) if p == r => {}
         (Ok(p), Ok(r)) => {
             return Err(GarError::validation(format!(
                 "[--validate] chave pública divergente: pinned={} runtime={} (ambos em sha256 curto). Operator rodou `garos-init` mas nao comitou a nova chave em client/storage/garos.pub?",
-                &short_hex(&p),
-                &short_hex(&r),
+                short_hex(&p),
+                short_hex(&r),
             )));
         }
         (Err(e), _) => {
