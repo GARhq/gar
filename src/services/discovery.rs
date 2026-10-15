@@ -67,3 +67,17 @@ pub fn iter_version_dirs_with_mtime(
 pub fn has_manifest(path: &Path) -> bool {
     path.join("manifest.json").is_file()
 }
+
+/// Resolve a generation-pointer symlink (`current`, `previous`,
+/// `staged`, `rescue`, or any per-channel variant) to the version
+/// string it points at. Returns `None` if the symlink is absent,
+/// not a symlink, or its target has no final path component.
+pub fn read_pointer(images_root: &Path, name: &str) -> Option<String> {
+    let path = images_root.join(name);
+    if !path.is_symlink() {
+        return None;
+    }
+    std::fs::read_link(&path)
+        .ok()
+        .and_then(|t| t.file_name().map(|n| n.to_string_lossy().into_owned()))
+}

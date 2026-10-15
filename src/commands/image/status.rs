@@ -10,6 +10,7 @@ use serde::Serialize;
 use crate::config::Config;
 use crate::error::Result;
 use crate::output;
+use crate::services::discovery;
 use crate::services::manifest;
 
 #[derive(Debug, Serialize)]
@@ -67,17 +68,17 @@ pub async fn run() -> Result<()> {
     let cfg = Config::from_env()?;
 
     let current = read_pointer_status(&cfg.images_root, "current")?;
-    let previous = read_pointer(&cfg.images_root, "previous");
-    let rescue = read_pointer(&cfg.images_root, "rescue");
-    let staged = read_pointer(&cfg.images_root, "staged");
+    let previous = discovery::read_pointer(&cfg.images_root, "previous");
+    let rescue = discovery::read_pointer(&cfg.images_root, "rescue");
+    let staged = discovery::read_pointer(&cfg.images_root, "staged");
 
     let channels: Vec<ChannelPointer> = CHANNEL_POINTERS
         .iter()
         .map(|(ch, cur, prev, stg)| ChannelPointer {
             channel: (*ch).into(),
-            current: read_pointer(&cfg.images_root, cur),
-            previous: read_pointer(&cfg.images_root, prev),
-            staged: read_pointer(&cfg.images_root, stg),
+            current: discovery::read_pointer(&cfg.images_root, cur),
+            previous: discovery::read_pointer(&cfg.images_root, prev),
+            staged: discovery::read_pointer(&cfg.images_root, stg),
         })
         .collect();
 
@@ -156,17 +157,6 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-fn read_pointer(images_root: &Path, name: &str) -> Option<String> {
-    let path = images_root.join(name);
-    if path.is_symlink() {
-        std::fs::read_link(&path)
-            .ok()
-            .and_then(|t| t.file_name().map(|n| n.to_string_lossy().into_owned()))
-    } else {
-        None
-    }
-}
-
 /// Render the three per-channel pointer lines (current / previous /
 /// staged) using a single table-driven pass instead of three
 /// open-coded `if let Some(...)` blocks.
@@ -181,7 +171,7 @@ fn print_channel_pointers(ch: &ChannelPointer) {
 }
 
 fn read_pointer_status(images_root: &Path, name: &str) -> Result<Option<CurrentStatus>> {
-    let ver = match read_pointer(images_root, name) {
+    let ver = match discovery::read_pointer(images_root, name) {
         Some(v) => v,
         None => return Ok(None),
     };
@@ -199,7 +189,7 @@ fn read_pointer_status(images_root: &Path, name: &str) -> Result<Option<CurrentS
 }
 
 fn count_versions(images_root: &Path) -> usize {
-    crate::services::discovery::iter_version_dirs(images_root)
+    discovery::iter_version_dirs(images_root)
         .map(|v| v.len())
         .unwrap_or(0)
 }
@@ -214,7 +204,7 @@ mod tests {
             std::env::temp_dir().join(format!("gar-status-{}-{}", "test", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         // No symlink exists
-        assert!(read_pointer(&tmp, "current").is_none());
+        assert!(discovery::read_pointer(&tmp, "current").is_none());
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

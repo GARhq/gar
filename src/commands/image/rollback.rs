@@ -104,7 +104,7 @@ fn perform_rollback(
     }
 
     // 6. Reconcile statuses
-    let rescue = read_pointer(&cfg.images_root, "rescue");
+    let rescue = crate::services::discovery::read_pointer(&cfg.images_root, "rescue");
     manifest::reconcile(
         &cfg.images_root,
         Some(&target_ver),
@@ -121,22 +121,11 @@ fn perform_rollback(
 }
 
 fn current_version(images_root: &Path) -> Option<String> {
-    read_pointer(images_root, "current")
+    crate::services::discovery::read_pointer(images_root, "current")
 }
 
 fn previous_version(images_root: &Path) -> Option<String> {
-    read_pointer(images_root, "previous")
-}
-
-fn read_pointer(images_root: &Path, name: &str) -> Option<String> {
-    let path = images_root.join(name);
-    if path.is_symlink() {
-        std::fs::read_link(&path)
-            .ok()
-            .and_then(|t| t.file_name().map(|n| n.to_string_lossy().into_owned()))
-    } else {
-        None
-    }
+    crate::services::discovery::read_pointer(images_root, "previous")
 }
 
 /// Atomic symlink: create temp symlink + rename (replaces target if exists).

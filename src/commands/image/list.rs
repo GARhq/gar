@@ -11,6 +11,7 @@ use serde::Serialize;
 use crate::config::Config;
 use crate::error::Result;
 use crate::output;
+use crate::services::discovery;
 use crate::services::manifest::{self, Status};
 
 #[derive(Debug, Serialize)]
@@ -41,7 +42,7 @@ pub async fn run() -> Result<()> {
 
     let mut rows: Vec<GenerationRow> = Vec::new();
 
-    for path in crate::services::discovery::iter_version_dirs(&cfg.images_root)? {
+    for path in discovery::iter_version_dirs(&cfg.images_root)? {
         let version = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
@@ -119,17 +120,6 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-fn read_pointer(images_root: &Path, name: &str) -> Option<String> {
-    let path = images_root.join(name);
-    if path.is_symlink() {
-        std::fs::read_link(&path)
-            .ok()
-            .and_then(|t| t.file_name().map(|n| n.to_string_lossy().into_owned()))
-    } else {
-        None
-    }
-}
-
 /// Snapshot of the four top-level generation pointers.
 struct Pointers {
     current: Option<String>,
@@ -141,10 +131,10 @@ struct Pointers {
 impl Pointers {
     fn collect(images_root: &Path) -> Self {
         Self {
-            current: read_pointer(images_root, "current"),
-            previous: read_pointer(images_root, "previous"),
-            staged: read_pointer(images_root, "staged"),
-            rescue: read_pointer(images_root, "rescue"),
+            current: discovery::read_pointer(images_root, "current"),
+            previous: discovery::read_pointer(images_root, "previous"),
+            staged: discovery::read_pointer(images_root, "staged"),
+            rescue: discovery::read_pointer(images_root, "rescue"),
         }
     }
 
@@ -237,7 +227,7 @@ mod tests {
     fn test_read_pointer_nonexistent() {
         let tmp = std::env::temp_dir().join(format!("gar-list-pointer-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
-        assert!(read_pointer(&tmp, "current").is_none());
+        assert!(discovery::read_pointer(&tmp, "current").is_none());
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 }
