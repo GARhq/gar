@@ -28,13 +28,42 @@ pub async fn cmd_add(
     storage_quota: Option<&str>,
 ) -> Result<()> {
     let cfg = Config::from_env()?;
+    let result = add_group(&cfg, name, description, storage_quota).await?;
+
+    if cfg.json_output {
+        output::json(&result)?;
+    } else if !result.catalog_updated {
+        output::ok(format!(
+            "grupo permanente '{}' ja existe (idempotente)",
+            result.name
+        ));
+    } else {
+        output::ok(format!("grupo criado: {}", result.name));
+        output::kv("descrição", &result.description);
+        output::kv("gid", result.gid.to_string());
+        output::kv("setor", &result.storage);
+        output::kv("quota", &result.quota);
+    }
+    Ok(())
+}
+
+/// Create a group and return its result without writing command output.
+///
+/// Used by higher-level commands such as `ensure-defaults`, which must
+/// aggregate results into a single machine-readable document.
+pub(super) async fn add_group(
+    cfg: &Config,
+    name: &str,
+    description: Option<&str>,
+    storage_quota: Option<&str>,
+) -> Result<GroupAddResult> {
     if name.is_empty() {
         return Err(GarError::invalid_argument(
             "uso: gar group add <nome> [--description DESC] [--storage-quota 100G]",
         ));
     }
     if group_system::is_permanent(name) && group_system::group_exists(name) {
-        return report_existing(name, &cfg);
+        return existing_group_result(name, cfg);
     }
     let description = description.unwrap_or("GAROS Group");
     let quota_str = storage_quota.unwrap_or("100G");
@@ -79,63 +108,44 @@ pub async fn cmd_add(
     );
     catalog.save(&cat_path)?;
 
-    if cfg.json_output {
-        output::json(&GroupAddResult {
-            name: name.into(),
-            description: description.into(),
-            gid,
-            storage: sector.display().to_string(),
-            quota: quota.human.clone(),
-            catalog_updated: true,
-        })?;
-    } else {
-        output::ok(format!("grupo criado: {name}"));
-        // `description` was already resolved to a `&str` by the
-        // earlier `description.unwrap_or("GAROS Group")` above.
-        output::kv("descrição", description);
-        output::kv("gid", gid.to_string());
-        output::kv("setor", sector.display().to_string());
-        output::kv("quota", quota.human.clone());
-    }
-    Ok(())
+    Ok(GroupAddResult {
+        name: name.into(),
+        description: description.into(),
+        gid,
+        storage: sector.display().to_string(),
+        quota: quota.human,
+        catalog_updated: true,
+    })
 }
 
-fn report_existing(name: &str, cfg: &Config) -> Result<()> {
+fn existing_group_result(name: &str, cfg: &Config) -> Result<GroupAddResult> {
     let cat_path = group_system::catalog_path(&cfg.runtime_root);
     let catalog = GroupCatalog::load(&cat_path)?;
     let entry = catalog.get(name);
-    if cfg.json_output {
-        let (description, storage, quota, gid) = match entry {
-            Some(e) => (
-                e.description.clone(),
-                e.storage_path.clone(),
-                e.quota.clone(),
-                e.gid,
-            ),
-            None => (
-                "GAROS Group".into(),
-                group_system::sector_path(&cfg.storage_base, name)
-                    .display()
-                    .to_string(),
-                "100G".into(),
-                group_system::group_gid(name).unwrap_or(0),
-            ),
-        };
-        output::json(&GroupAddResult {
-            name: name.into(),
-            description,
-            gid,
-            storage,
-            quota,
-            catalog_updated: false,
-        })?;
-    } else {
-        output::ok(format!(
-            "grupo permanente '{}' ja existe (idempotente)",
-            name
-        ));
-    }
-    Ok(())
+    let (description, storage, quota, gid) = match entry {
+        Some(e) => (
+            e.description.clone(),
+            e.storage_path.clone(),
+            e.quota.clone(),
+            e.gid,
+        ),
+        None => (
+            "GAROS Group".into(),
+            group_system::sector_path(&cfg.storage_base, name)
+                .display()
+                .to_string(),
+            "100G".into(),
+            group_system::group_gid(name).unwrap_or(0),
+        ),
+    };
+    Ok(GroupAddResult {
+        name: name.into(),
+        description,
+        gid,
+        storage,
+        quota,
+        catalog_updated: false,
+    })
 }
 
 pub async fn cmd_list() -> Result<()> {
