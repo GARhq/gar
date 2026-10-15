@@ -60,6 +60,53 @@ impl Default for BuildOptions {
     }
 }
 
+/// Paths discovered inside a NixOS system build tree.
+struct SystemArtifacts {
+    kernel: std::path::PathBuf,
+    initrd: std::path::PathBuf,
+    init: std::path::PathBuf,
+    kernel_params: std::path::PathBuf,
+}
+
+/// Discover kernel/initrd/init/kernel-params inside a Nix store result.
+fn discover_artifacts(system_path: &std::path::Path) -> Result<SystemArtifacts> {
+    let kernel = ["kernel", "bzImage", "vmlinuz"]
+        .iter()
+        .map(|n| system_path.join(n))
+        .find(|p| p.exists())
+        .ok_or_else(|| {
+            GarError::build(format!(
+                "Kernel não encontrado em {} (tentou: kernel, bzImage, vmlinuz)",
+                system_path.display()
+            ))
+        })?;
+    let initrd = system_path.join("initrd");
+    if !initrd.exists() {
+        return Err(GarError::build(format!(
+            "Initrd não encontrado em {}",
+            system_path.display()
+        )));
+    }
+    let init = if system_path.join("toplevel/init").exists() {
+        system_path.join("toplevel/init")
+    } else if system_path.join("init").exists() {
+        system_path.join("init")
+    } else {
+        system_path.to_path_buf()
+    };
+    let kernel_params = if system_path.join("toplevel/kernel-params").exists() {
+        system_path.join("toplevel/kernel-params")
+    } else {
+        system_path.join("kernel-params")
+    };
+    Ok(SystemArtifacts {
+        kernel,
+        initrd,
+        init,
+        kernel_params,
+    })
+}
+
 /// Run the image build pipeline.
 pub async fn run(
     target: Option<ImageTarget>,
@@ -95,38 +142,9 @@ pub async fn run(
     output::info(format!("System path: {}", system_path.display()));
 
     // Discover kernel/initrd/erofs/init paths inside the Nix store result.
-    let kernel_source = ["kernel", "bzImage", "vmlinuz"]
-        .iter()
-        .map(|n| system_path.join(n))
-        .find(|p| p.exists())
-        .ok_or_else(|| {
-            GarError::build(format!(
-                "Kernel não encontrado em {} (tentou: kernel, bzImage, vmlinuz)",
-                system_path.display()
-            ))
-        })?;
-    let initrd_source = system_path.join("initrd");
-    if !initrd_source.exists() {
-        return Err(GarError::build(format!(
-            "Initrd não encontrado em {}",
-            system_path.display()
-        )));
-    }
-    let init_path = if system_path.join("toplevel/init").exists() {
-        system_path.join("toplevel/init")
-    } else if system_path.join("init").exists() {
-        system_path.join("init")
-    } else {
-        system_path.clone()
-    };
-    let init_path_for_display = init_path.display().to_string();
-    let kernel_params_path = if system_path.join("toplevel/kernel-params").exists() {
-        system_path.join("toplevel/kernel-params")
-    } else {
-        system_path.join("kernel-params")
-    };
-    let kernel_params_str = if kernel_params_path.exists() {
-        fs::read_to_string(&kernel_params_path).unwrap_or_default()
+    let artifacts = discover_artifacts(&system_path)?;
+    let kernel_params_str = if artifacts.kernel_params.exists() {
+        fs::read_to_string(&artifacts.kernel_params).unwrap_or_default()
     } else {
         String::new()
     };
@@ -138,10 +156,10 @@ pub async fn run(
         target: target.as_str().into(),
         channel: channel.as_str().into(),
         system_path: system_path.clone(),
-        init_path: init_path.clone(),
-        kernel_path: kernel_source,
-        initrd_path: initrd_source,
-        kernel_params: kernel_params_path.clone(),
+        init_path: artifacts.init.clone(),
+        kernel_path: artifacts.kernel.clone(),
+        initrd_path: artifacts.initrd.clone(),
+        kernel_params: artifacts.kernel_params.clone(),
         kernel_sha256: String::new(), // populated inside stage_generation
         initrd_sha256: String::new(),
         timestamp: Utc::now().to_rfc3339(),
@@ -158,87 +176,27 @@ pub async fn run(
     )?;
     let image_path = cfg.images_root.join(&build_id);
 
-    // Copy netboot.ipxe or build-specific iPXE script if present
-    let ipxe_source = [
-        system_path.join("netboot.ipxe"),
-        cfg.http_root.join("netboot.ipxe"),
-        cfg.flake_path.join("netboot.ipxe"),
-    ]
-    .into_iter()
-    .find(|p| p.is_file());
-
-    if let Some(src) = ipxe_source {
-        let _ = fs::copy(&src, image_path.join("netboot.ipxe"));
-    } else {
-        let ipxe_content = format!(
-            "#!ipxe\n\
-             echo Booting GAROS {build_id}...\n\
-             kernel http://{}:{}/netboot/{build_id}/bzImage init={} ip=dhcp {}\n\
-             initrd http://{}:{}/netboot/{build_id}/initrd\n\
-             boot\n",
-            cfg.server_ip,
-            cfg.http_port,
-            init_path_for_display,
-            kernel_params_str.trim(),
-            cfg.server_ip,
-            cfg.http_port
-        );
-        let _ = fs::write(image_path.join("netboot.ipxe"), ipxe_content);
-    }
-
-    // Set permissions so nginx can read
-    let _ = fs::set_permissions(&image_path, fs::Permissions::from_mode(0o755));
-    if let Ok(entries) = fs::read_dir(&image_path) {
-        for entry in entries.flatten() {
-            if let Ok(meta) = entry.metadata() {
-                if meta.is_file() {
-                    let _ = fs::set_permissions(entry.path(), fs::Permissions::from_mode(0o644));
-                } else if meta.is_dir() {
-                    let _ = fs::set_permissions(entry.path(), fs::Permissions::from_mode(0o755));
-                }
-            }
-        }
-    }
+    write_netboot_ipxe(
+        &cfg,
+        &image_path,
+        &build_id,
+        &artifacts.init,
+        &kernel_params_str,
+    )?;
+    set_generation_permissions(&image_path)?;
 
     // GC root registration (best-effort)
     let _ = build::create_gc_root(&system_path, &image_path.join(".gcroot"));
 
     // Manifest writing
-    let kernel_sha = build::sha256_file(&image_path.join("bzImage")).unwrap_or_default();
-    let initrd_sha = build::sha256_file(&image_path.join("initrd")).unwrap_or_default();
-    let erofs_sha = if image_path.join("garos-root.erofs").exists() {
-        build::sha256_file(&image_path.join("garos-root.erofs")).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
-    let manifest = manifest::Manifest {
-        id: build_id.clone(),
-        timestamp: Utc::now().to_rfc3339(),
-        version: 1,
-        system_path: system_path.display().to_string(),
-        init_path: init_path.display().to_string(),
-        artifacts: manifest::Artifacts {
-            kernel: "bzImage".into(),
-            initrd: "initrd".into(),
-            erofs: if erofs_sha.is_empty() {
-                String::new()
-            } else {
-                "garos-root.erofs".into()
-            },
-        },
-        checksums: manifest::Checksums {
-            kernel: kernel_sha,
-            initrd: initrd_sha,
-            erofs: erofs_sha,
-        },
-        status: manifest::Status::Staged,
-        target: target.as_str().into(),
-        channel: channel.as_str().into(),
-        hardware_class: crate::services::channel::target_hardware_class(target).to_string(),
-        signature: String::new(),
-    };
-    let _ = manifest::write(&image_path, &manifest);
+    write_staged_manifest(
+        &image_path,
+        &build_id,
+        &system_path,
+        &artifacts,
+        target,
+        channel,
+    )?;
 
     // Phase 3: Atomic symlink swap
     output::info("Promovendo...");
@@ -249,62 +207,27 @@ pub async fn run(
         .ok()
         .and_then(|t| t.file_name().map(|n| n.to_string_lossy().into_owned()));
 
-    // Mark a pending rollback record so a subsequent health-check failure can
-    // roll back without remembering the previous state manually. Matches
-    // bash `write_pending_rollback` (publish.sh:390-402).
-    if let Some(ref prev) = previous_build_id {
-        if prev.as_str() != build_id {
-            let pending_path = cfg.images_root.join(".rollback-pending");
-            if let Err(e) = rollback::write_pending_rollback(
-                &pending_path,
-                prev,
-                &build_id,
-                Some(channel.as_str()),
-            ) {
-                output::warn(format!(
-                    "falha ao escrever .rollback-pending (continuando): {e}"
-                ));
-            }
-        }
-    }
-
-    // Clean up if current is a directory (not a symlink)
-    if current_link.is_dir() && !current_link.is_symlink() {
-        output::warn("Destino 'current' é um diretório real; removendo para permitir symlink...");
-        fs::remove_dir_all(&current_link).map_err(|e| {
-            GarError::publish(format!(
-                "falha ao remover diretório 'current' legado: {}",
-                e
-            ))
-        })?;
-    }
+    write_pending_rollback_if_needed(
+        &cfg.images_root,
+        &previous_build_id,
+        &build_id,
+        channel.as_str(),
+    );
 
     // Preserve previous pointer
     if let Ok(old_target) = fs::read_link(&current_link) {
-        if let Some(old_name) = old_target.file_name() {
-            let tmp_prev = cfg.images_root.join("previous.tmp");
-            let _ = fs::remove_file(&tmp_prev);
-            if symlink(old_name, &tmp_prev).is_ok() {
-                let _ = fs::rename(&tmp_prev, cfg.images_root.join("previous"));
-            }
+        if let Some(old_name) = old_target.file_name().and_then(|n| n.to_str()) {
+            atomic_symlink_swap(&cfg.images_root, "previous", old_name)?;
         }
     }
 
-    // Atomic symlink swap for current
-    let tmp_link = cfg.images_root.join("current.tmp");
-    let _ = fs::remove_file(&tmp_link);
-    symlink(&build_id, &tmp_link)
-        .map_err(|e| GarError::publish(format!("falha ao criar symlink temporário: {}", e)))?;
-    fs::rename(&tmp_link, &current_link)
-        .map_err(|e| GarError::publish(format!("falha ao renomear symlink 'current': {}", e)))?;
-
-    // Update channel pointer (current-<channel>)
-    let channel_ptr_name = format!("current-{}", channel.as_str());
-    let channel_tmp = cfg.images_root.join(format!("{}.tmp", channel_ptr_name));
-    let _ = fs::remove_file(&channel_tmp);
-    if symlink(&build_id, &channel_tmp).is_ok() {
-        let _ = fs::rename(&channel_tmp, cfg.images_root.join(&channel_ptr_name));
-    }
+    // Atomic symlink swap for current and per-channel pointer.
+    atomic_symlink_swap(&cfg.images_root, "current", &build_id)?;
+    atomic_symlink_swap(
+        &cfg.images_root,
+        &format!("current-{}", channel.as_str()),
+        &build_id,
+    )?;
 
     // Phase 4 (auto-rollback bookkeeping): pending marker stays in place so
     // a later `gar image rollback --auto` can detect a broken publish.
@@ -360,6 +283,156 @@ pub async fn run(
         output::ok("Validação OK (kernel/initrd/erofs/manifest/assinatura)");
     }
 
+    Ok(())
+}
+
+/// Write or copy the netboot.ipxe script for this generation.
+fn write_netboot_ipxe(
+    cfg: &Config,
+    image_path: &std::path::Path,
+    build_id: &str,
+    init_path: &std::path::Path,
+    kernel_params: &str,
+) -> Result<()> {
+    let ipxe_source = [
+        cfg.flake_path.join("netboot.ipxe"),
+        cfg.http_root.join("netboot.ipxe"),
+    ]
+    .into_iter()
+    .find(|p| p.is_file());
+
+    if let Some(src) = ipxe_source {
+        fs::copy(&src, image_path.join("netboot.ipxe"))
+            .map_err(|e| GarError::publish(format!("falha ao copiar netboot.ipxe: {e}")))?;
+        return Ok(());
+    }
+
+    let ipxe_content = format!(
+        "#!ipxe\n\
+         echo Booting GAROS {build_id}...\n\
+         kernel http://{}:{}/netboot/{build_id}/bzImage init={} ip=dhcp {}\n\
+         initrd http://{}:{}/netboot/{build_id}/initrd\n\
+         boot\n",
+        cfg.server_ip,
+        cfg.http_port,
+        init_path.display(),
+        kernel_params.trim(),
+        cfg.server_ip,
+        cfg.http_port
+    );
+    fs::write(image_path.join("netboot.ipxe"), ipxe_content)
+        .map_err(|e| GarError::publish(format!("falha ao escrever netboot.ipxe: {e}")))?;
+    Ok(())
+}
+
+/// Set nginx-friendly permissions on a generation directory.
+fn set_generation_permissions(image_path: &std::path::Path) -> Result<()> {
+    fs::set_permissions(image_path, fs::Permissions::from_mode(0o755)).map_err(|e| {
+        GarError::publish(format!("falha ao setar permissões de {image_path:?}: {e}"))
+    })?;
+    let entries = fs::read_dir(image_path)
+        .map_err(|e| GarError::publish(format!("falha ao ler {image_path:?}: {e}")))?;
+    for entry in entries.flatten() {
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let mode = if meta.is_file() { 0o644 } else { 0o755 };
+        let _ = fs::set_permissions(entry.path(), fs::Permissions::from_mode(mode));
+    }
+    Ok(())
+}
+
+/// Write the staged manifest with sha256 checksums.
+fn write_staged_manifest(
+    image_path: &std::path::Path,
+    build_id: &str,
+    system_path: &std::path::Path,
+    artifacts: &SystemArtifacts,
+    target: ImageTarget,
+    channel: Channel,
+) -> Result<()> {
+    let kernel_sha = build::sha256_file(&image_path.join("bzImage")).unwrap_or_default();
+    let initrd_sha = build::sha256_file(&image_path.join("initrd")).unwrap_or_default();
+    let erofs_sha = if image_path.join("garos-root.erofs").exists() {
+        build::sha256_file(&image_path.join("garos-root.erofs")).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let manifest = manifest::Manifest {
+        id: build_id.into(),
+        timestamp: Utc::now().to_rfc3339(),
+        version: 1,
+        system_path: system_path.display().to_string(),
+        init_path: artifacts.init.display().to_string(),
+        artifacts: manifest::Artifacts {
+            kernel: "bzImage".into(),
+            initrd: "initrd".into(),
+            erofs: if erofs_sha.is_empty() {
+                String::new()
+            } else {
+                "garos-root.erofs".into()
+            },
+        },
+        checksums: manifest::Checksums {
+            kernel: kernel_sha,
+            initrd: initrd_sha,
+            erofs: erofs_sha,
+        },
+        status: manifest::Status::Staged,
+        target: target.as_str().into(),
+        channel: channel.as_str().into(),
+        hardware_class: crate::services::channel::target_hardware_class(target).to_string(),
+        signature: String::new(),
+    };
+    manifest::write(image_path, &manifest)?;
+    Ok(())
+}
+
+/// Mark a pending rollback record so a subsequent health-check failure can
+/// roll back without remembering the previous state manually.
+fn write_pending_rollback_if_needed(
+    images_root: &std::path::Path,
+    previous_build_id: &Option<String>,
+    build_id: &str,
+    channel: &str,
+) {
+    let Some(prev) = previous_build_id else {
+        return;
+    };
+    if prev == build_id {
+        return;
+    }
+    let pending_path = images_root.join(".rollback-pending");
+    if let Err(e) = rollback::write_pending_rollback(&pending_path, prev, build_id, Some(channel)) {
+        output::warn(format!(
+            "falha ao escrever .rollback-pending (continuando): {e}"
+        ));
+    }
+}
+
+/// Atomically replace a symlink `<images_root>/<name>` with a symlink to `target`.
+///
+/// Uses `<name>.tmp` as intermediate and `rename` for atomicity. Any pre-existing
+/// non-symlink file at `<name>` is removed first.
+fn atomic_symlink_swap(images_root: &std::path::Path, name: &str, target: &str) -> Result<()> {
+    let link_path = images_root.join(name);
+    let tmp_path = images_root.join(format!("{name}.tmp"));
+
+    if link_path.exists() && !link_path.is_symlink() {
+        if link_path.is_dir() {
+            fs::remove_dir_all(&link_path)?;
+        } else {
+            fs::remove_file(&link_path)?;
+        }
+    }
+
+    let _ = fs::remove_file(&tmp_path);
+    symlink(std::path::Path::new(target), &tmp_path)
+        .map_err(|e| GarError::publish(format!("falha ao criar symlink temporário {name}: {e}")))?;
+    fs::rename(&tmp_path, &link_path)
+        .map_err(|e| GarError::publish(format!("falha ao renomear symlink {name}: {e}")))?;
     Ok(())
 }
 
