@@ -96,23 +96,10 @@ pub fn collect_report(images_root: &Path, inventory_path: &Path) -> ClientSessio
     let inventory = inventory_text(inventory_path);
     let inventory_path_str = inventory_path.display().to_string();
 
-    let mut ok = 0usize;
-    let mut fail = 0usize;
-    if manifest_available {
-        ok += 1;
-    } else {
-        fail += 1;
-    }
-    if !nfs_exports.is_empty() {
-        ok += 1;
-    } else {
-        fail += 1;
-    }
-    if !inventory.is_empty() {
-        ok += 1;
-    } else {
-        fail += 1;
-    }
+    let mut counters = [0usize, 0usize]; // [ok, fail]
+    bump(&mut counters, manifest_available);
+    bump(&mut counters, !nfs_exports.is_empty());
+    bump(&mut counters, !inventory.is_empty());
 
     ClientSessionReport {
         manifest,
@@ -120,8 +107,17 @@ pub fn collect_report(images_root: &Path, inventory_path: &Path) -> ClientSessio
         nfs_exports,
         inventory,
         inventory_path: inventory_path_str,
-        ok_count: ok,
-        fail_count: fail,
+        ok_count: counters[0],
+        fail_count: counters[1],
+    }
+}
+
+/// Increment the OK/FAIL counter pair for a single boolean check.
+fn bump(counters: &mut [usize; 2], condition_holds: bool) {
+    if condition_holds {
+        counters[0] += 1;
+    } else {
+        counters[1] += 1;
     }
 }
 
@@ -198,8 +194,17 @@ pub fn list_clients(json_path: &Path) -> Vec<ClientRecord> {
     }
 }
 
+/// Format 6 MAC bytes as `aa:bb:cc:dd:ee:ff` (lowercase).
+fn format_mac_colon(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
 /// Normalize MAC string to canonical `XX:XX:XX:XX:XX:XX` lowercase form.
-/// Accepts `XX:XX:...` or `XX-XX-...` separators.
+/// Accepts `XX:XX:...`, `XX-XX-...`, or `XXXX.XXXX.XXXX` separators.
 pub fn normalize_mac(raw: &str) -> Result<String, String> {
     let cleaned: String = raw
         .chars()
@@ -213,34 +218,28 @@ pub fn normalize_mac(raw: &str) -> Result<String, String> {
             cleaned.len()
         ));
     }
-    let bytes: Vec<u8> = (0..6)
-        .map(|i| u8::from_str_radix(&cleaned[i * 2..i * 2 + 2], 16))
+    let bytes = parse_hex_octets(&cleaned, raw)?;
+    Ok(format_mac_colon(&bytes))
+}
+
+/// Parse 12-char hex string into 6 bytes; surface a typed error mentioning
+/// the original input. Shared by MAC parsers.
+fn parse_hex_octets(cleaned_hex12: &str, original_input: &str) -> Result<Vec<u8>, String> {
+    (0..6)
+        .map(|i| u8::from_str_radix(&cleaned_hex12[i * 2..i * 2 + 2], 16))
         .collect::<std::result::Result<_, _>>()
-        .map_err(|e| format!("MAC '{}' contains invalid hex: {}", raw, e))?;
-    Ok(bytes
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<Vec<_>>()
-        .join(":"))
+        .map_err(|e| format!("MAC '{}' contains invalid hex: {}", original_input, e))
 }
 
 /// Build a Wake-on-LAN magic packet.
 ///
 /// Layout: 6 bytes `0xFF` followed by the 6-byte MAC repeated 16 times.
-/// Total length: 102 bytes.
-pub fn build_magic_packet(mac_canonical: &str) -> Result<Vec<u8>, String> {
-    let parts: Vec<&str> = mac_canonical.split(':').collect();
-    if parts.len() != 6 {
-        return Err(format!(
-            "MAC '{}' must have 6 octets separated by ':'",
-            mac_canonical
-        ));
-    }
-    let mac_bytes: Vec<u8> = parts
-        .iter()
-        .map(|p| u8::from_str_radix(p, 16))
-        .collect::<std::result::Result<_, _>>()
-        .map_err(|e| format!("invalid hex octet in '{}': {}", mac_canonical, e))?;
+/// Total length: 102 bytes. Accepts any input `normalize_mac` accepts
+/// (mixed case, dash/dot/colon separators) — reuses the canonical form
+/// rather than re-parsing the MAC.
+pub fn build_magic_packet(mac: &str) -> Result<Vec<u8>, String> {
+    let mac_canonical = normalize_mac(mac)?;
+    let mac_bytes = parse_hex_octets(&mac_canonical.replace(':', ""), mac)?;
 
     let mut packet = Vec::with_capacity(102);
     packet.extend_from_slice(&[0xFFu8; 6]);
