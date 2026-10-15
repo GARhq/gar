@@ -139,6 +139,43 @@ pub fn sha256_file(path: &Path) -> Result<String> {
     Ok(hash.to_string())
 }
 
+/// Copy an artifact using `cp -L` so symlinks are dereferenced.
+///
+/// fs::copy can OOM when copying large symlinked artifacts in tmpfs-backed
+/// trees; `cp` delegates to the kernel sendfile path. Returns a descriptive
+/// error if the copy fails.
+fn copy_artifact(src: &Path, dst: &Path, label: &str) -> Result<()> {
+    let status = Command::new("cp")
+        .arg("-L")
+        .arg(src)
+        .arg(dst)
+        .status()
+        .map_err(|e| GarError::publish(format!("falha ao iniciar cp de {label}: {e}")))?;
+    if !status.success() {
+        return Err(GarError::publish(format!("falha ao copiar {label}")));
+    }
+    Ok(())
+}
+
+/// Resolve the EROFS source path inside a system build tree.
+fn resolve_erofs_src(system_path: &Path) -> Option<PathBuf> {
+    ["erofs", "garos-root.erofs"]
+        .into_iter()
+        .map(|name| system_path.join(name))
+        .find(|p| p.exists())
+}
+
+/// Compute the sha256 of `<generation_dir>/garos-root.erofs` if it exists,
+/// otherwise return an empty string.
+fn sha256_of_optional_erofs(generation_dir: &Path) -> Result<String> {
+    let path = generation_dir.join("garos-root.erofs");
+    if path.exists() {
+        sha256_file(&path)
+    } else {
+        Ok(String::new())
+    }
+}
+
 /// Ensure a GC root exists for a published generation.
 ///
 /// Idempotent: if `<generation_dir>/.gcroot` already exists, returns
@@ -251,42 +288,24 @@ pub fn stage_generation(
     std::fs::create_dir_all(&generation_dir)?;
 
     // Copy kernel -> bzImage, initrd -> initrd (with dereferencing to avoid tmpfs OOM in fs::copy).
-    let status = Command::new("cp")
-        .arg("-L")
-        .arg(&artifact.kernel_path)
-        .arg(generation_dir.join("bzImage"))
-        .status()?;
-    if !status.success() {
-        return Err(GarError::publish("falha ao copiar bzImage"));
-    }
-
-    let status = Command::new("cp")
-        .arg("-L")
-        .arg(&artifact.initrd_path)
-        .arg(generation_dir.join("initrd"))
-        .status()?;
-    if !status.success() {
-        return Err(GarError::publish("falha ao copiar initrd"));
-    }
+    copy_artifact(
+        &artifact.kernel_path,
+        &generation_dir.join("bzImage"),
+        "bzImage",
+    )?;
+    copy_artifact(
+        &artifact.initrd_path,
+        &generation_dir.join("initrd"),
+        "initrd",
+    )?;
 
     // Copy EROFS root image (from garosPublishTree or legacy toplevel)
-    let erofs_src = if artifact.system_path.join("erofs").exists() {
-        Some(artifact.system_path.join("erofs"))
-    } else if artifact.system_path.join("garos-root.erofs").exists() {
-        Some(artifact.system_path.join("garos-root.erofs"))
-    } else {
-        None
-    };
-
-    if let Some(src) = erofs_src {
-        let status = Command::new("cp")
-            .arg("-L")
-            .arg(&src)
-            .arg(generation_dir.join("garos-root.erofs"))
-            .status()?;
-        if !status.success() {
-            return Err(GarError::publish("falha ao copiar garos-root.erofs"));
-        }
+    if let Some(src) = resolve_erofs_src(&artifact.system_path) {
+        copy_artifact(
+            &src,
+            &generation_dir.join("garos-root.erofs"),
+            "garos-root.erofs",
+        )?;
     }
 
     // Write .init_path and .kernel_params sidecars.
@@ -300,12 +319,7 @@ pub fn stage_generation(
             params.push(' ');
         }
 
-        let erofs_sha = if generation_dir.join("garos-root.erofs").exists() {
-            sha256_file(&generation_dir.join("garos-root.erofs"))?
-        } else {
-            String::new()
-        };
-
+        let erofs_sha = sha256_of_optional_erofs(&generation_dir)?;
         if !erofs_sha.is_empty() {
             params.push_str(&format!("erofs.sha256={} ", erofs_sha));
         }
@@ -317,11 +331,7 @@ pub fn stage_generation(
     let kernel_sha = sha256_file(&generation_dir.join("bzImage"))?;
     let initrd_sha = sha256_file(&generation_dir.join("initrd"))?;
 
-    let erofs_sha = if generation_dir.join("garos-root.erofs").exists() {
-        sha256_file(&generation_dir.join("garos-root.erofs"))?
-    } else {
-        String::new()
-    };
+    let erofs_sha = sha256_of_optional_erofs(&generation_dir)?;
 
     // Compute next version for Anti-Downgrade protection
     let mut next_version = 1;
