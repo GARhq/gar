@@ -13,7 +13,9 @@ use crate::error::{GarError, Result};
 pub fn target_channel(target: ImageTarget) -> Channel {
     match target {
         ImageTarget::DesktopGeneric => Channel::Generic,
-        ImageTarget::DesktopLab | ImageTarget::HypervDebug | ImageTarget::DesktopXfce => Channel::Lab,
+        ImageTarget::DesktopLab | ImageTarget::HypervDebug | ImageTarget::DesktopXfce => {
+            Channel::Lab
+        }
         ImageTarget::RescueMinimal => Channel::Rescue,
     }
 }
@@ -24,7 +26,7 @@ pub fn target_hardware_class_str(target: &str) -> &'static str {
     match target {
         "desktop-generic" => "physical-generic",
         "desktop-lab" => "physical-lab",
-        "desktop-xfce" => "physical-lab",  // K-2026-10-13: herda hw do lab
+        "desktop-xfce" => "physical-lab", // K-2026-10-13: herda hw do lab
         "hyperv-debug" => "hyperv",
         "rescue-minimal" => "rescue",
         _ => "unknown",
@@ -33,13 +35,7 @@ pub fn target_hardware_class_str(target: &str) -> &'static str {
 
 /// Map a target to its hardware class.
 pub fn target_hardware_class(target: ImageTarget) -> &'static str {
-    match target {
-        ImageTarget::DesktopGeneric => "physical-generic",
-        ImageTarget::DesktopLab => "physical-lab",
-        ImageTarget::DesktopXfce => "physical-lab",  // K-2026-10-13
-        ImageTarget::HypervDebug => "hyperv",
-        ImageTarget::RescueMinimal => "rescue",
-    }
+    target_hardware_class_str(target.as_str())
 }
 
 /// Default target for a channel.
@@ -239,7 +235,7 @@ pub fn resolve_client_target(
             Some("Alias legado 'physical-generic' detectado; use 'desktop-generic'".into()),
         )),
         "desktop-lab" | "lab" => Ok(("desktop-lab".into(), None)),
-        "desktop-xfce" | "xfce" => Ok(("desktop-xfce".into(), None)),  // K-2026-10-13
+        "desktop-xfce" | "xfce" => Ok(("desktop-xfce".into(), None)), // K-2026-10-13
         "hyperv-debug" => Ok(("hyperv-debug".into(), None)),
         "rescue-minimal" | "rescue" => {
             let warning = if raw == "rescue" {
