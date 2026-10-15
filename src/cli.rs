@@ -243,16 +243,12 @@ pub enum UserCmd {
         archive: bool,
     },
     /// Run health checks on a user's home/quota/groups
-    Doctor {
-        username: String,
-    },
+    Doctor { username: String },
     /// Sync BTRFS quota from group catalog to per-user qgroup limits
     #[command(name = "quota-sync")]
     QuotaSync,
     /// Show recent login/activity for a user
-    Activity {
-        username: String,
-    },
+    Activity { username: String },
 }
 
 /// Group subcommands (era garos group).
@@ -275,10 +271,7 @@ pub enum GroupCmd {
         archive: bool,
     },
     /// Change permissions on a group's storage sector
-    Chmod {
-        groupname: String,
-        perms: String,
-    },
+    Chmod { groupname: String, perms: String },
     /// Add or remove a member from a group
     Members {
         groupname: String,
@@ -288,9 +281,7 @@ pub enum GroupCmd {
         remove: Option<String>,
     },
     /// Show permissions/mode of a group's storage sector
-    Permissions {
-        groupname: String,
-    },
+    Permissions { groupname: String },
     /// Create the default GAROS groups (admin, kiosk, lab, etc) if missing
     #[command(name = "ensure-defaults")]
     EnsureDefaults,
@@ -370,7 +361,7 @@ pub enum SecretsCmd {
 pub enum ImageTarget {
     DesktopGeneric,
     DesktopLab,
-    DesktopXfce,        // K-2026-10-13: perfil leve p/ teste PXE (~1-2 GB)
+    DesktopXfce, // K-2026-10-13: perfil leve p/ teste PXE (~1-2 GB)
     HypervDebug,
     RescueMinimal,
 }

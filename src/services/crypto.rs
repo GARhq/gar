@@ -109,12 +109,7 @@ pub fn verify_manifest(
     }
 
     let output = Command::new("openssl")
-        .args([
-            "pkeyutl",
-            "-verify",
-            "-pubin",
-            "-inkey",
-        ])
+        .args(["pkeyutl", "-verify", "-pubin", "-inkey"])
         .arg(&pub_path)
         .args(["-rawin", "-in"])
         .arg(manifest_path)

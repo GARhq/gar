@@ -103,7 +103,8 @@ async fn check_flake_drift(cfg: &Config) -> Result<()> {
     // Query upstream HEAD via the github REST API. Cheap (60 req/h
     // unauthenticated) and avoids depending on the `gh` CLI.
     let url = "https://api.github.com/repos/GARhq/gar/commits/main";
-    let body = ureq_get(url).map_err(|e| GarError::config(format!("fetch upstream HEAD failed: {e}")))?;
+    let body =
+        ureq_get(url).map_err(|e| GarError::config(format!("fetch upstream HEAD failed: {e}")))?;
     let upstream_sha = body
         .lines()
         .find_map(|l| {

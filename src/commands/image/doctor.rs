@@ -642,11 +642,8 @@ mod tests {
     fn test_check_manifest_checksum_kernel_fails_on_divergence() {
         // Fixture: bzImage content is X, manifest claims SHA(Y).
         // Must FAIL with "divergente".
-        let tmp = std::env::temp_dir().join(format!(
-            "gar-doc-kernel-{}-{}",
-            std::process::id(),
-            line!()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("gar-doc-kernel-{}-{}", std::process::id(), line!()));
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join("bzImage"), b"real-kernel-bytes").unwrap();
         std::fs::write(tmp.join("initrd"), b"i").unwrap();
@@ -677,10 +674,7 @@ mod tests {
         .unwrap();
         let c = check_manifest_checksum_kernel(&tmp);
         assert_eq!(c.status, "FAIL", "kernel SHA divergence must FAIL");
-        let detail = c
-            .detail
-            .as_deref()
-            .unwrap_or("<no detail>");
+        let detail = c.detail.as_deref().unwrap_or("<no detail>");
         assert!(
             detail.contains("divergente"),
             "error should mention divergente: {detail}"
@@ -690,11 +684,8 @@ mod tests {
 
     #[test]
     fn test_check_manifest_checksum_initrd_fails_on_divergence() {
-        let tmp = std::env::temp_dir().join(format!(
-            "gar-doc-initrd-{}-{}",
-            std::process::id(),
-            line!()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("gar-doc-initrd-{}-{}", std::process::id(), line!()));
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join("bzImage"), b"k").unwrap();
         std::fs::write(tmp.join("initrd"), b"real-initrd-bytes").unwrap();
@@ -730,11 +721,8 @@ mod tests {
     #[serial(env_config)]
     fn test_check_public_key_match_fails_when_keys_diverge() {
         // Two different keys → must FAIL.
-        let tmp = std::env::temp_dir().join(format!(
-            "gar-doc-pkm-{}-{}",
-            std::process::id(),
-            line!()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("gar-doc-pkm-{}-{}", std::process::id(), line!()));
         let pinned_dir = tmp.join("flake/client/storage");
         let runtime_dir = tmp.join("runtime-keys");
         std::fs::create_dir_all(&pinned_dir).unwrap();
@@ -761,11 +749,8 @@ mod tests {
     #[serial(env_config)]
     fn test_check_public_key_match_passes_when_keys_match() {
         // Same bytes both sides → must pass.
-        let tmp = std::env::temp_dir().join(format!(
-            "gar-doc-pkm-ok-{}-{}",
-            std::process::id(),
-            line!()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("gar-doc-pkm-ok-{}-{}", std::process::id(), line!()));
         let pinned_dir = tmp.join("flake/client/storage");
         let runtime_dir = tmp.join("runtime-keys");
         std::fs::create_dir_all(&pinned_dir).unwrap();
