@@ -132,19 +132,9 @@ pub async fn cmd_update(
             //    directly to avoid "Cannot start a runtime from within
             //    a runtime" — `block_on` inside #[tokio::main] is UB).
             output::info("[1/7] Atualizando flake inputs...");
-            use std::process::Command;
-            let status = Command::new("nix")
-                .args(["flake", "update"])
-                .current_dir(&flake_path)
-                .status();
-            match status {
-                Ok(s) if s.success() => {}
-                Ok(s) => Err(GarError::config(format!(
-                    "nix flake update falhou (exit {})",
-                    s.code().unwrap_or(-1)
-                )))?,
-                Err(e) => Err(GarError::config(format!("nix flake update: {e}")))?,
-            }
+            run_command("nix flake update", |cmd| {
+                cmd.args(["flake", "update"]).current_dir(&flake_path);
+            })?;
 
             // 1.5) nix-collect-garbage (preserva 7d, libera espaço para o build).
             // K-2026-10-06: roda por padrão em todo update. Idempotente com
@@ -167,7 +157,7 @@ pub async fn cmd_update(
             // 4) build + test (combined via "test"; the previous generation
             //    is bootable until we run "switch" below).
             output::info("[4/7] Aplicando em modo de teste (nh os test)...");
-            run_nh_os_action(&cfg, "test")?;
+            run_nh_os(&cfg, "test")?;
             // Critical: if test failed, run_nh_os_action returned Err already.
 
             // 4.5) flake check (runs AFTER nh os test, only if requested)
@@ -180,8 +170,8 @@ pub async fn cmd_update(
                 output::info("[4.5/7] Validando flake (nix flake check)...");
                 let system_attr = format!("nixosConfigurations.{}", cfg.target_host);
                 let flake_ref = format!(".#{}@toplevel", system_attr);
-                let status = Command::new("nix")
-                    .args([
+                run_command("nix flake check", |cmd| {
+                    cmd.args([
                         "flake",
                         "check",
                         "--impure",
@@ -189,16 +179,8 @@ pub async fn cmd_update(
                         "--no-allow-import-from-derivation",
                         &flake_ref,
                     ])
-                    .current_dir(&flake_path)
-                    .status();
-                match status {
-                    Ok(s) if s.success() => {}
-                    Ok(s) => Err(GarError::config(format!(
-                        "nix flake check falhou (exit {})",
-                        s.code().unwrap_or(-1)
-                    )))?,
-                    Err(e) => Err(GarError::config(format!("nix flake check: {e}")))?,
-                }
+                    .current_dir(&flake_path);
+                })?;
             }
 
             // 5) health check
@@ -226,7 +208,7 @@ pub async fn cmd_update(
             // and went straight to GC, so the new generation never became the
             // boot default. Mirrors step 4's `nh os test` call.
             output::info("[6/7] Consolidando no bootloader (nh os switch)...");
-            run_nh_os_action(&cfg, "switch")?;
+            run_nh_os(&cfg, "switch")?;
 
             // 7) post-switch gc (libera paths usados só pelo build do switch)
             output::info("[7/7] Limpeza final: nix-collect-garbage (preserva 7d)...");
@@ -276,18 +258,12 @@ pub async fn cmd_clean() -> Result<()> {
     Ok(())
 }
 
-/// Run nh os with the appropriate flags.
+/// Run `nh os <action>` with the appropriate flags.
 ///
 /// K-2026-10-05: \`nh os\` refuses to run as root. We invoke it through
 /// \`sudo -u gabriel-rocha\` which mirrors the original scheme (nh
 /// internally escalates back to root for activation).
-pub fn run_nh_os(cfg: &Config, action: &str) -> Result<()> {
-    run_nh_os_action(cfg, action)
-}
-
-/// Internal: actually run `nh os <action>`. Kept separate so we can swap
-/// `nh` for `nixos-rebuild` in tests if needed in the future.
-fn run_nh_os_action(cfg: &Config, action: &str) -> Result<()> {
+fn run_nh_os(cfg: &Config, action: &str) -> Result<()> {
     // nh refuses root. Drop to the operator user; nh internally re-escalates.
     let mut cmd = Command::new("sudo");
     cmd.args(["-u", "gabriel-rocha", "--", "nh"]);
@@ -369,23 +345,7 @@ fn check_free_nix_space(min_mb: u64) -> Result<()> {
 fn check_critical_services(services: &[String]) -> Result<u32> {
     let mut fails = 0u32;
     for svc in services {
-        // `systemctl list-unit-files <unit>` exits non-zero when the unit
-        // is not present and prints "0 unit files listed." — match the
-        // bash script semantics: missing unit is NOT a failure.
-        let present = Command::new("systemctl")
-            .args(["list-unit-files", &format!("{svc}.service")])
-            .output()?;
-        if !present.status.success() {
-            output::info(format!(
-                "[skip] {svc}: unit file ausente neste sistema, no falha do update"
-            ));
-            continue;
-        }
-        let stdout = String::from_utf8_lossy(&present.stdout);
-        let listed = stdout
-            .lines()
-            .any(|l| l.trim_start().starts_with(&format!("{svc}.service")));
-        if !listed {
+        if !is_unit_present(svc)? {
             output::info(format!(
                 "[skip] {svc}: unit file ausente neste sistema, no falha do update"
             ));
@@ -406,6 +366,24 @@ fn check_critical_services(services: &[String]) -> Result<u32> {
     Ok(fails)
 }
 
+/// Returns true if the unit has a unit file on this system.
+///
+/// `systemctl list-unit-files <unit>` exits non-zero when the unit is not
+/// present and prints "0 unit files listed." — missing units are treated
+/// as absent, not as an error.
+fn is_unit_present(svc: &str) -> Result<bool> {
+    let present = Command::new("systemctl")
+        .args(["list-unit-files", &format!("{svc}.service")])
+        .output()?;
+    if !present.status.success() {
+        return Ok(false);
+    }
+    let stdout = String::from_utf8_lossy(&present.stdout);
+    Ok(stdout
+        .lines()
+        .any(|l| l.trim_start().starts_with(&format!("{svc}.service"))))
+}
+
 /// Dry-run plan printer.
 fn plan_only(
     flake_path: &Path,
@@ -415,34 +393,54 @@ fn plan_only(
     skip_health_check: bool,
     skip_gc: bool,
 ) -> Result<()> {
+    let flag = |skip| if skip { "(PULADO)" } else { "" };
+    let steps = [
+        ("1", "nix flake update", ""),
+        ("1.5", "nix-collect-garbage (preserva 7d)", flag(skip_gc)),
+        ("2", "nix flake check", ""),
+        (
+            "3",
+            &format!("df /nix >= {MIN_FREE_NIX_MB}MB"),
+            flag(skip_disk_check),
+        ),
+        ("4", "nh os test", ""),
+        (
+            "5",
+            "systemctl is-active (serviços críticos)",
+            flag(skip_health_check),
+        ),
+        ("6", "nh os switch", ""),
+        ("7", "nix-collect-garbage (pós-switch)", flag(skip_gc)),
+    ];
+
     let mut plan = String::new();
     plan.push_str("Plano de atualização (DRY-RUN, nada será executado):\n");
     plan.push_str(&format!("  flake       : {}\n", flake_path.display()));
     plan.push_str(&format!("  target_host : {}\n", cfg.target_host));
     plan.push_str(&format!("  services    : {}\n", services.join(", ")));
     plan.push_str("  etapas      :\n");
-    plan.push_str("    1. nix flake update\n");
-    plan.push_str(&format!(
-        "    1.5. nix-collect-garbage (preserva 7d)  {}\n",
-        if skip_gc { "(PULADO)" } else { "" }
-    ));
-    plan.push_str("    2. nix flake check\n");
-    plan.push_str(&format!(
-        "    3. df /nix >= {MIN_FREE_NIX_MB}MB  {}\n",
-        if skip_disk_check { "(PULADO)" } else { "" }
-    ));
-    plan.push_str("    4. nh os test\n");
-    plan.push_str(&format!(
-        "    5. systemctl is-active (serviços críticos)  {}\n",
-        if skip_health_check { "(PULADO)" } else { "" }
-    ));
-    plan.push_str("    6. nh os switch\n");
-    plan.push_str(&format!(
-        "    7. nix-collect-garbage (pós-switch)  {}\n",
-        if skip_gc { "(PULADO)" } else { "" }
-    ));
+    for (n, desc, flag) in steps {
+        plan.push_str(&format!("    {n}. {desc}  {flag}\n"));
+    }
     output::info(plan.trim_end());
     Ok(())
+}
+
+/// Run a command, mapping failure to a descriptive `GarError::config`.
+///
+/// `label` is used in error messages (e.g. "nix flake update").
+/// `build_cmd` receives a fresh `Command` so callers can add args/current_dir.
+fn run_command<F: FnOnce(&mut Command)>(label: &str, build_cmd: F) -> Result<()> {
+    let mut cmd = Command::new(label.split_whitespace().next().unwrap_or(label));
+    build_cmd(&mut cmd);
+    match cmd.status() {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(GarError::config(format!(
+            "{label} falhou (exit {})",
+            s.code().unwrap_or(-1)
+        ))),
+        Err(e) => Err(GarError::config(format!("{label}: {e}"))),
+    }
 }
 
 /// Run `nix-collect-garbage --delete-older-than 7d` and report freed space.
