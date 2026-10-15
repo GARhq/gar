@@ -5,7 +5,6 @@
 
 use std::path::Path;
 
-use owo_colors::OwoColorize;
 use serde::Serialize;
 
 use crate::config::Config;
@@ -79,7 +78,7 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
-    output::section(format!("Versões em {}", cfg.images_root.display()));
+    output::header(format!("Versões em {}", cfg.images_root.display()));
     println!();
 
     if rows.is_empty() {
@@ -87,35 +86,35 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
-    // Header
-    println!(
-        "  {:<25} {:<10} {:<22} {:<18} {:<10} {:<18} {}",
-        "VERSION".bold(),
-        "SIZE".bold(),
-        "TIMESTAMP".bold(),
-        "TARGET".bold(),
-        "CHANNEL".bold(),
-        "HW".bold(),
-        "STATUS".bold()
+    let table_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            vec![
+                r.version.clone(),
+                r.size.clone(),
+                r.timestamp.clone(),
+                r.target.clone(),
+                r.channel.clone(),
+                r.hardware_class.clone(),
+                r.status.clone(),
+            ]
+        })
+        .collect();
+    output::table(
+        &[
+            "VERSION",
+            "SIZE",
+            "TIMESTAMP",
+            "TARGET",
+            "CHANNEL",
+            "HW",
+            "STATUS",
+        ],
+        &table_rows,
     );
 
-    // Rows
-    for row in &rows {
-        let status_colored = colorize_status(&row.status);
-        println!(
-            "  {:<25} {:<10} {:<22} {:<18} {:<10} {:<18} {}",
-            row.version,
-            row.size,
-            row.timestamp,
-            row.target,
-            row.channel,
-            row.hardware_class,
-            status_colored,
-        );
-    }
-
     println!();
-    println!("  Total: {} versão(ões)", rows.len());
+    output::info(format!("Total: {} versão(ões)", rows.len()));
 
     Ok(())
 }
@@ -197,16 +196,6 @@ fn format_status(s: Status) -> String {
         Status::Staged => "staged".into(),
         Status::Rescue => "rescue".into(),
         Status::Inactive => "inactive".into(),
-    }
-}
-
-fn colorize_status(s: &str) -> String {
-    match s {
-        "active" => format!("{} {}", "*".green().bold(), "active".green().bold()),
-        "previous" => format!("{} {}", "←".yellow().bold(), "previous".yellow()),
-        "rescue" => format!("{} {}", "+".blue().bold(), "rescue".blue()),
-        "staged" => format!("{} {}", "↻".magenta().bold(), "staged".magenta()),
-        _ => s.to_string(),
     }
 }
 

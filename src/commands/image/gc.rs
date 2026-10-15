@@ -236,11 +236,53 @@ fn build_report(
 fn report(cfg: &Config, result: &GcResult, keep: u32) {
     if cfg.json_output {
         let _ = output::json(result);
-    } else if let Some(snap) = &result.snapshot_path {
-        output::ok(format!("GC concluído — snapshot: {snap}"));
+        return;
+    }
+
+    output::header("Garbage Collection");
+    println!();
+
+    let mut summary_rows: Vec<Vec<String>> = Vec::new();
+    if !result.preserved_pointers.is_empty() {
+        summary_rows.push(vec![
+            "Preservados (ponteiros)".into(),
+            result.preserved_pointers.len().to_string(),
+        ]);
+    }
+    if !result.preserved_retention.is_empty() {
+        summary_rows.push(vec![
+            "Preservados (retenção)".into(),
+            result.preserved_retention.len().to_string(),
+        ]);
+    }
+    if !result.preserved_recent.is_empty() {
+        summary_rows.push(vec![
+            "Preservados (recentes)".into(),
+            result.preserved_recent.len().to_string(),
+        ]);
+    }
+    if !result.preserved_unknown.is_empty() {
+        summary_rows.push(vec![
+            "Preservados (sem manifest)".into(),
+            result.preserved_unknown.len().to_string(),
+        ]);
+    }
+    summary_rows.push(vec!["Removidos".into(), result.removed.len().to_string()]);
+    summary_rows.push(vec!["Mantidos no total".into(), result.kept.to_string()]);
+    output::table(&["CATEGORIA", "QTD"], &summary_rows);
+    println!();
+
+    if let Some(snap) = &result.snapshot_path {
+        output::ok(format!("Snapshot de segurança: {snap}"));
+    }
+    if result.removed.is_empty() {
+        output::info(format!(
+            "Nada a remover — mantidas as últimas {keep} (além de ponteiros e proteções conservadoras)."
+        ));
     } else {
-        output::ok(format!(
-            "GC: nada a remover — mantidas as últimas {keep} (além de ponteiros e proteções conservadoras)."
+        output::info(format!(
+            "{} geração(ões) removida(s).",
+            result.removed.len()
         ));
     }
 }

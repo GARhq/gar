@@ -100,33 +100,40 @@ pub async fn run() -> Result<()> {
     }
 
     // Human-readable
-    output::section("Status GAR Image");
+    output::header("Status GAR Image");
     println!();
-    println!("  Servidor  : {}", cfg.server_ip);
-    println!("  HTTP Port : {}", cfg.http_port);
-    println!("  Imagens   : {}", cfg.images_root.display());
-    println!("  HTTP Root : {}", cfg.http_root.display());
+
+    output::kv("Servidor", cfg.server_ip.clone());
+    output::kv("HTTP Port", cfg.http_port.to_string());
+    output::kv("Imagens", cfg.images_root.display().to_string());
+    output::kv("HTTP Root", cfg.http_root.display().to_string());
     println!();
 
     if let Some(cur) = &report.current {
-        println!("  Versão ativa : {}", cur.version);
-        println!("  Target ativo : {}", cur.target);
-        println!("  Canal ativo  : {}", cur.channel);
-        println!("  Classe HW    : {}", cur.hardware_class);
-        println!("  Timestamp    : {}", cur.timestamp);
-        println!("  System path  : {}", cur.system_path);
+        output::kv("Versão ativa", cur.version.clone());
+        output::kv("Target ativo", cur.target.clone());
+        output::kv("Canal ativo", cur.channel.clone());
+        output::kv("Classe HW", cur.hardware_class.clone());
+        output::kv("Timestamp", cur.timestamp.clone());
+        output::kv("System path", cur.system_path.clone());
         println!();
-        println!(
-            "  Kernel URL   : http://{}:{}/netboot/current/bzImage",
-            cfg.server_ip, cfg.http_port
+        output::kv(
+            "Kernel URL",
+            format!(
+                "http://{}:{}/netboot/current/bzImage",
+                cfg.server_ip, cfg.http_port
+            ),
         );
-        println!(
-            "  Initrd URL   : http://{}:{}/netboot/current/initrd",
-            cfg.server_ip, cfg.http_port
+        output::kv(
+            "Initrd URL",
+            format!(
+                "http://{}:{}/netboot/current/initrd",
+                cfg.server_ip, cfg.http_port
+            ),
         );
-        println!(
-            "  iPXE URL     : http://{}:{}/boot.ipxe",
-            cfg.server_ip, cfg.http_port
+        output::kv(
+            "iPXE URL",
+            format!("http://{}:{}/boot.ipxe", cfg.server_ip, cfg.http_port),
         );
     } else {
         output::warn("Nenhuma versão ativa. Execute: gar image build");
@@ -134,40 +141,44 @@ pub async fn run() -> Result<()> {
 
     if let Some(prev) = &report.previous {
         println!();
-        println!("  Versão ant.  : {}", prev);
+        output::kv("Versão ant.", prev.clone());
     }
     if let Some(rsc) = &report.rescue {
-        println!("  Versão rescue: {}", rsc);
+        output::kv("Versão rescue", rsc.clone());
     }
     if let Some(stg) = &report.staged {
-        println!("  Versão staged: {}", stg);
+        output::kv("Versão staged", stg.clone());
     }
 
     println!();
-    for ch in &report.channels {
-        if ch.current.is_some() || ch.previous.is_some() || ch.staged.is_some() {
-            print_channel_pointers(ch);
-        }
+    let channel_rows = build_channel_rows(&report.channels);
+    if !channel_rows.is_empty() {
+        output::table(&["CANAL", "POINTER", "VERSÃO"], &channel_rows);
+        println!();
     }
 
     let count = count_versions(&cfg.images_root);
-    println!();
-    println!("  Versões armazenadas: {}", count);
+    output::info(format!("Versões armazenadas: {count}"));
 
     Ok(())
 }
 
-/// Render the three per-channel pointer lines (current / previous /
-/// staged) using a single table-driven pass instead of three
-/// open-coded `if let Some(...)` blocks.
-fn print_channel_pointers(ch: &ChannelPointer) {
-    const POINTER_LABELS: &[&str] = &["current", "previous", "staged"];
-    let slots: [&Option<String>; 3] = [&ch.current, &ch.previous, &ch.staged];
-    for (slot, label) in slots.iter().zip(POINTER_LABELS.iter()) {
-        if let Some(v) = slot.as_ref() {
-            println!("  Canal {:<7} {}: {}", ch.channel, label, v);
+/// Flatten per-channel pointers into rows for `output::table`. Only
+/// non-empty slots are emitted so the table never shows blank cells.
+fn build_channel_rows(channels: &[ChannelPointer]) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    for ch in channels {
+        for (label, slot) in [
+            ("current", &ch.current),
+            ("previous", &ch.previous),
+            ("staged", &ch.staged),
+        ] {
+            if let Some(v) = slot.as_ref() {
+                rows.push(vec![ch.channel.clone(), (*label).into(), (*v).clone()]);
+            }
         }
     }
+    rows
 }
 
 fn read_pointer_status(images_root: &Path, name: &str) -> Result<Option<CurrentStatus>> {
