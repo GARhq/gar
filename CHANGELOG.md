@@ -1,3 +1,30 @@
+## [v0.2.8] - 2026-10-14
+
+### Refactored
+- **refactor(commands/secrets)**: troca hex manual (`format!("{:02x}")`) por `hex::encode/decode`;
+  remove `.expect("Failed to create encryptor")` por `.map_err`; extrai `output_encrypt_result` e
+  `output_decrypt_result`; mensagens em português consistente com o restante do CLI.
+- **refactor(commands/image/doctor)**: `run()` quebrada em `collect_infra_checks`,
+  `collect_integrity_checks`, `tally` e `render` — 14 linhas no topo em vez de 134.
+  `IMAGE_POINTERS`, `CHANNELS`, `CHANNEL_POINTER_PREFIXES` viram constantes nomeadas.
+  `keys_dir()` unifica a resolução de `GAR_KEYS_DIR` (era duplicada em 2 checks).
+- **refactor(services/client)**: extraídos `format_mac_colon()` e `parse_hex_octets()` —
+  `build_magic_packet` agora aceita qualquer formato que `normalize_mac` aceita
+  (não só canônico com `:`). `collect_report` usa `bump()` helper em vez de 6 linhas de if/else.
+- **refactor(services/runtime_guard)**: `PLACEHOLDER_BOOT_DEVICES` vira constante (substitui
+  match feio); sudo check agora valida exit code, não só ausência de erro;
+  `.args(&args)` → `.args(args)` (clippy); usa `GarError` em vez de `crate::error::GarError`.
+- **refactor(services/shell)**: `run_success` e `run_success_in_dir` consolidados em
+  `run_inner(cwd: Option<&Path>)`; `SPINNER_TICKS` constante; `new_spinner()` e `failure()`
+  helpers extraídos. Funções públicas viram one-liners que delegam.
+
+### Changed
+- **deps**: adicionado `hex = "0.4.3"` (usado por `commands/secrets`).
+
+K-2026-10-14 / Onda 5 — DRY em shell, doctor, secrets, client, runtime_guard
+
+---
+
 ## [v0.2.7] - 2026-10-14
 
 ### Refactored
