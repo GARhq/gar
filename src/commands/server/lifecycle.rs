@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
@@ -13,10 +13,15 @@ use crate::services::{generations, lock as global_lock, runtime_guard};
 /// silently skipped by `systemctl list-unit-files`, so this list may safely
 /// include services that don't exist on a given host (e.g. garos-control-api
 /// on a non-API host).
+///
+/// Post-migration (EROFS + JuiceFS + Caddy): the bash side dropped nginx/nfs-server
+/// in favour of caddy (web), redis-juicefs-meta (metadata) and minio (object
+/// storage). Keep this list aligned with `garos-update.sh`.
 pub const DEFAULT_CRITICAL_SERVICES: &[&str] = &[
-    "nginx",
+    "caddy",
     "dnsmasq",
-    "nfs-server",
+    "redis-juicefs-meta",
+    "minio",
     "garos-control-api",
     "garos-control-web",
 ];
@@ -32,6 +37,129 @@ const UPDATE_LOCK_PATH: &str = "/run/gar-update.lock";
 
 /// Lock acquisition timeout (seconds) — matches `flock -w 60` semantics.
 const UPDATE_LOCK_TIMEOUT_SECS: u64 = 60;
+
+// ─── Update pipeline (steps are the unit of change) ────────────────────
+//
+// The 7 phases of `gar server update` are described declaratively as
+// a `&[UpdateStep]`. Each step carries:
+//   * a stable id (rendered as `[N/7]` in progress logs)
+//   * a human title (rendered in progress and dry-run output)
+//   * which skip-flag (if any) suppresses the step
+//   * the action to run (a plain `fn` pointer — no closure, no
+//     boxing, no allocation per step)
+//
+// This means `cmd_update` and `plan_only` walk the same data, so the
+// dry-run output and the real run can never drift out of sync.
+
+/// Per-step context passed to every action. Carries everything the
+/// steps need without having to thread 6 parameters through 8
+/// helpers.
+struct UpdateContext {
+    cfg: Config,
+    flake_path: PathBuf,
+    services: Vec<String>,
+    flags: UpdateFlags,
+}
+
+/// Flags that gate individual steps.
+#[derive(Copy, Clone)]
+struct UpdateFlags {
+    skip_disk_check: bool,
+    skip_health_check: bool,
+    skip_gc: bool,
+    check_flake: bool,
+}
+
+/// Which user-supplied flag, if any, suppresses a step. Used by
+/// `plan_only` to render the `(PULADO)` marker.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum SkipReason {
+    Disk,
+    Gc,
+    Health,
+    Flake,
+}
+
+impl SkipReason {
+    fn label(self) -> &'static str {
+        match self {
+            SkipReason::Disk => "(PULADO: --skip-disk-check)",
+            SkipReason::Gc => "(PULADO: --skip-gc)",
+            SkipReason::Health => "(PULADO: --skip-health-check)",
+            SkipReason::Flake => "(PULADO: --check-flake não solicitado)",
+        }
+    }
+}
+
+/// One phase of the update pipeline.
+struct UpdateStep {
+    id: &'static str,
+    title: &'static str,
+    skip: Option<SkipReason>,
+    action: fn(&UpdateContext) -> Result<()>,
+}
+
+const STEPS: &[UpdateStep] = &[
+    UpdateStep {
+        id: "1",
+        title: "Atualizar flake inputs (nix flake update)",
+        skip: None,
+        action: step_flake_update,
+    },
+    UpdateStep {
+        id: "1.5",
+        title: "Coletar lixo do /nix (preserva 7d)",
+        skip: Some(SkipReason::Gc),
+        action: step_collect_garbage,
+    },
+    UpdateStep {
+        id: "3",
+        title: "Checar espaço livre em /nix",
+        skip: Some(SkipReason::Disk),
+        action: step_disk_check,
+    },
+    UpdateStep {
+        id: "4",
+        title: "Aplicar em modo de teste (nh os test)",
+        skip: None,
+        action: step_nh_test,
+    },
+    UpdateStep {
+        id: "4.5",
+        title: "Validar flake (nix flake check)",
+        skip: Some(SkipReason::Flake),
+        action: step_flake_check,
+    },
+    UpdateStep {
+        id: "5",
+        title: "Verificar integridade dos serviços críticos",
+        skip: Some(SkipReason::Health),
+        action: step_health_check,
+    },
+    UpdateStep {
+        id: "6",
+        title: "Consolidar no bootloader (nh os switch)",
+        skip: None,
+        action: step_nh_switch,
+    },
+    UpdateStep {
+        id: "7",
+        title: "Limpeza final (nix-collect-garbage)",
+        skip: Some(SkipReason::Gc),
+        action: step_collect_garbage,
+    },
+];
+
+/// True if the step is gated by a flag the user actually set.
+fn is_step_skipped(step: &UpdateStep, flags: UpdateFlags) -> bool {
+    match (step.skip, flags) {
+        (Some(SkipReason::Disk), f) => f.skip_disk_check,
+        (Some(SkipReason::Gc), f) => f.skip_gc,
+        (Some(SkipReason::Health), f) => f.skip_health_check,
+        (Some(SkipReason::Flake), f) => !f.check_flake,
+        (None, _) => false,
+    }
+}
 
 /// `gar server switch` — nixos-rebuild switch.
 pub async fn cmd_switch() -> Result<()> {
@@ -78,6 +206,10 @@ pub async fn cmd_rollback() -> Result<()> {
 /// Replicates the safety flow of `garos-update.sh` (lock, disk precheck,
 /// health-check, automatic rollback on failure) and accepts flags to
 /// override / skip each stage.
+///
+/// Phases are described declaratively as a `&[UpdateStep]` so the
+/// dry-run output and the live run walk the same data. Each step's
+/// `action` is a `fn` pointer that receives an [`UpdateContext`].
 pub async fn cmd_update(
     services: Vec<String>,
     skip_disk_check: bool,
@@ -100,26 +232,38 @@ pub async fn cmd_update(
     } else {
         services
     };
+    let flags = UpdateFlags {
+        skip_disk_check,
+        skip_health_check,
+        skip_gc,
+        check_flake,
+    };
+    let ctx = UpdateContext {
+        cfg,
+        flake_path,
+        services,
+        flags,
+    };
 
     output::header("gar server update (Safe Update Flow)");
-    output::info(format!("flake       : {}", flake_path.display()));
-    output::info(format!("target_host : {}", cfg.target_host));
-    output::info(format!("services    : {}", services.join(", ")));
-    output::info(format!(
-        "flags       : skip_disk_check={} skip_gc={} skip_health_check={} dry_run={}",
-        skip_disk_check, skip_gc, skip_health_check, dry_run
-    ));
+    output::kv("flake", ctx.flake_path.display().to_string());
+    output::kv("target_host", ctx.cfg.target_host.clone());
+    output::kv("services", ctx.services.join(", "));
+    output::kv(
+        "flags",
+        format!(
+            "skip_disk_check={} skip_gc={} skip_health_check={} check_flake={} dry_run={}",
+            flags.skip_disk_check,
+            flags.skip_gc,
+            flags.skip_health_check,
+            flags.check_flake,
+            dry_run
+        ),
+    );
 
     if dry_run {
         output::warn("dry-run ativo: nenhuma operação será executada.");
-        return plan_only(
-            &flake_path,
-            &cfg,
-            &services,
-            skip_disk_check,
-            skip_health_check,
-            skip_gc,
-        );
+        return plan_only(&ctx);
     }
 
     let lock_path = std::path::Path::new(UPDATE_LOCK_PATH);
@@ -127,102 +271,93 @@ pub async fn cmd_update(
         lock_path,
         "server update",
         Duration::from_secs(UPDATE_LOCK_TIMEOUT_SECS),
-        || {
-            // 1) flake update (sync — call nix via std::process::Command
-            //    directly to avoid "Cannot start a runtime from within
-            //    a runtime" — `block_on` inside #[tokio::main] is UB).
-            output::info("[1/7] Atualizando flake inputs...");
-            run_command("nix flake update", |cmd| {
-                cmd.args(["flake", "update"]).current_dir(&flake_path);
-            })?;
-
-            // 1.5) nix-collect-garbage (preserva 7d, libera espaço para o build).
-            // K-2026-10-06: roda por padrão em todo update. Idempotente com
-            // nix.gc.automatic no NixOS module. Use --skip-gc para pular.
-            if !skip_gc {
-                output::info("[1.5/7] Coletando lixo do /nix (preserva 7d)...");
-                run_collect_garbage()?;
-            } else {
-                output::info("[1.5/7] Coleta de lixo pulada (--skip-gc).");
-            }
-
-            // 3) disk precheck (renumbered — see order comment)
-            if !skip_disk_check {
-                output::info("[3/7] Checando espaço livre em /nix...");
-                check_free_nix_space(MIN_FREE_NIX_MB)?;
-            } else {
-                output::info("[3/7] Checagem de disco pulada (--skip-disk-check).");
-            }
-
-            // 4) build + test (combined via "test"; the previous generation
-            //    is bootable until we run "switch" below).
-            output::info("[4/7] Aplicando em modo de teste (nh os test)...");
-            run_nh_os(&cfg, "test")?;
-            // Critical: if test failed, run_nh_os_action returned Err already.
-
-            // 4.5) flake check (runs AFTER nh os test, only if requested)
-            //    Validates the entire flake attribute tree that the new
-            //    generation depends on. Skipped by default because in
-            //    production the nixos test already proved the system builds.
-            //    --skip-flake-check default keeps the safe path; opt in
-            //    with --check-flake for a thorough (slower) validation.
-            if check_flake {
-                output::info("[4.5/7] Validando flake (nix flake check)...");
-                let system_attr = format!("nixosConfigurations.{}", cfg.target_host);
-                let flake_ref = format!(".#{}@toplevel", system_attr);
-                run_command("nix flake check", |cmd| {
-                    cmd.args([
-                        "flake",
-                        "check",
-                        "--impure",
-                        "--no-build",
-                        "--no-allow-import-from-derivation",
-                        &flake_ref,
-                    ])
-                    .current_dir(&flake_path);
-                })?;
-            }
-
-            // 5) health check
-            if !skip_health_check {
-                output::info("[5/7] Verificando integridade dos serviços críticos...");
-                std::thread::sleep(Duration::from_secs(3));
-                let fails = check_critical_services(&services)?;
-                if fails > 0 {
-                    output::warn(format!(
-                        "[CRÍTICO] {fails} serviço(s) crítico(s) falhou(aram). Executando rollback..."
-                    ));
-                    let _ = Command::new("nixos-rebuild")
-                        .args(["switch", "--rollback"])
-                        .status();
-                    return Err(GarError::config(
-                        "Update falhou nos health checks. Rollback concluído.",
-                    ));
-                }
-            } else {
-                output::info("[5/7] Health check pulado (--skip-health-check).");
-            }
-
-            // 6) switch — consolidates the test build as the new boot default.
-            // K-2026-10-12 (batch cirurgico): previously this step only logged
-            // and went straight to GC, so the new generation never became the
-            // boot default. Mirrors step 4's `nh os test` call.
-            output::info("[6/7] Consolidando no bootloader (nh os switch)...");
-            run_nh_os(&cfg, "switch")?;
-
-            // 7) post-switch gc (libera paths usados só pelo build do switch)
-            output::info("[7/7] Limpeza final: nix-collect-garbage (preserva 7d)...");
-            // Best-effort: falha aqui sóloga, não aborta o update (que já
-            // consolidou). Idempotente — se skip_gc foi pedido, o operator
-            // pode rodar `gar server clean` depois manualmente.
-            let _ = run_collect_garbage();
-
-            Ok(())
-        },
+        || run_pipeline(&ctx),
     )?;
 
     output::ok("Atualização GAROS concluída sem quedas! 🎉");
     Ok(())
+}
+
+/// Execute the 7 phases in order, skipping any whose flag the
+/// caller set. Returns on the first failure (the lock release
+/// happens automatically via the closure's `with_lock_timeout`).
+fn run_pipeline(ctx: &UpdateContext) -> Result<()> {
+    for step in STEPS {
+        if is_step_skipped(step, ctx.flags) {
+            output::info(format!(
+                "[{}/{}] {} (pulado)",
+                step.id,
+                STEPS.len(),
+                step.title
+            ));
+            continue;
+        }
+        output::info(format!("[{}/{}] {}", step.id, STEPS.len(), step.title));
+        (step.action)(ctx)?;
+    }
+    Ok(())
+}
+
+fn step_flake_update(ctx: &UpdateContext) -> Result<()> {
+    run_command("nix flake update", |cmd| {
+        cmd.args(["flake", "update"]).current_dir(&ctx.flake_path);
+    })
+}
+
+fn step_collect_garbage(_ctx: &UpdateContext) -> Result<()> {
+    // Idempotente com nix.gc.automatic. Se --skip-gc foi pedido, o
+    // operator pode rodar `gar server clean` depois manualmente.
+    run_collect_garbage()
+}
+
+fn step_disk_check(_ctx: &UpdateContext) -> Result<()> {
+    check_free_nix_space(MIN_FREE_NIX_MB)
+}
+
+fn step_nh_test(ctx: &UpdateContext) -> Result<()> {
+    run_nh_os(&ctx.cfg, "test")
+}
+
+fn step_flake_check(ctx: &UpdateContext) -> Result<()> {
+    let system_attr = format!("nixosConfigurations.{}", ctx.cfg.target_host);
+    let flake_ref = format!(".#{}@toplevel", system_attr);
+    run_command("nix flake check", |cmd| {
+        cmd.args([
+            "flake",
+            "check",
+            "--impure",
+            "--no-build",
+            "--no-allow-import-from-derivation",
+            &flake_ref,
+        ])
+        .current_dir(&ctx.flake_path);
+    })
+}
+
+fn step_health_check(ctx: &UpdateContext) -> Result<()> {
+    // 3s settle so services can stabilize after `nh os test` before
+    // the check runs.
+    std::thread::sleep(Duration::from_secs(3));
+    let fails = check_critical_services(&ctx.services)?;
+    if fails > 0 {
+        output::warn(format!(
+            "[CRÍTICO] {fails} serviço(s) crítico(s) falhou(aram). Executando rollback..."
+        ));
+        let _ = Command::new("nixos-rebuild")
+            .args(["switch", "--rollback"])
+            .status();
+        return Err(GarError::config(
+            "Update falhou nos health checks. Rollback concluído.",
+        ));
+    }
+    Ok(())
+}
+
+fn step_nh_switch(ctx: &UpdateContext) -> Result<()> {
+    // K-2026-10-12 (batch cirurgico): previously this step only
+    // logged and went straight to GC, so the new generation never
+    // became the boot default. Mirrors step 4's `nh os test` call.
+    run_nh_os(&ctx.cfg, "switch")
 }
 
 /// `gar server clean` — nh clean all + fallback.
@@ -385,44 +520,20 @@ fn is_unit_present(svc: &str) -> Result<bool> {
 }
 
 /// Dry-run plan printer.
-fn plan_only(
-    flake_path: &Path,
-    cfg: &Config,
-    services: &[String],
-    skip_disk_check: bool,
-    skip_health_check: bool,
-    skip_gc: bool,
-) -> Result<()> {
-    let flag = |skip| if skip { "(PULADO)" } else { "" };
-    let steps = [
-        ("1", "nix flake update", ""),
-        ("1.5", "nix-collect-garbage (preserva 7d)", flag(skip_gc)),
-        ("2", "nix flake check", ""),
-        (
-            "3",
-            &format!("df /nix >= {MIN_FREE_NIX_MB}MB"),
-            flag(skip_disk_check),
-        ),
-        ("4", "nh os test", ""),
-        (
-            "5",
-            "systemctl is-active (serviços críticos)",
-            flag(skip_health_check),
-        ),
-        ("6", "nh os switch", ""),
-        ("7", "nix-collect-garbage (pós-switch)", flag(skip_gc)),
-    ];
-
-    let mut plan = String::new();
-    plan.push_str("Plano de atualização (DRY-RUN, nada será executado):\n");
-    plan.push_str(&format!("  flake       : {}\n", flake_path.display()));
-    plan.push_str(&format!("  target_host : {}\n", cfg.target_host));
-    plan.push_str(&format!("  services    : {}\n", services.join(", ")));
-    plan.push_str("  etapas      :\n");
-    for (n, desc, flag) in steps {
-        plan.push_str(&format!("    {n}. {desc}  {flag}\n"));
+fn plan_only(ctx: &UpdateContext) -> Result<()> {
+    output::header("Plano de atualização (DRY-RUN, nada será executado)");
+    output::kv("flake", ctx.flake_path.display().to_string());
+    output::kv("target_host", ctx.cfg.target_host.clone());
+    output::kv("services", ctx.services.join(", "));
+    output::info("etapas:");
+    for step in STEPS {
+        let marker = step
+            .skip
+            .filter(|_| is_step_skipped(step, ctx.flags))
+            .map(|s| s.label())
+            .unwrap_or("");
+        output::info(format!("    {}. {} {}", step.id, step.title, marker));
     }
-    output::info(plan.trim_end());
     Ok(())
 }
 
