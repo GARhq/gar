@@ -830,7 +830,7 @@ surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ga
         std::fs::write(tmp.join("themes/plymouth/plymouth.nix"), "real content").unwrap();
 
         // Manifest claims hash of "different content" — must mismatch.
-        let wrong_hash = sha256_hex_of_bytes(b"different content");
+        let wrong_hash = sha256_hex(b"different content");
         let content = format!(
             "brandlab_manifest_version|2\n\
              surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=garos\n\
@@ -875,23 +875,6 @@ surface|plymouth|declarative-theme|present|themes/plymouth/plymouth.nix|theme=ga
     // Helper: real-path SHA256 for tests.
     fn sha256_hex_of(path: &Path) -> String {
         let bytes = std::fs::read(path).expect("read fixture");
-        sha256_hex_of_bytes(&bytes)
-    }
-
-    fn sha256_hex_of_bytes(bytes: &[u8]) -> String {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
-        let mut child = Command::new("sha256sum")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("sha256sum available");
-        child.stdin.take().unwrap().write_all(bytes).unwrap();
-        let out = child.wait_with_output().unwrap();
-        String::from_utf8_lossy(&out.stdout)
-            .split_whitespace()
-            .next()
-            .unwrap()
-            .to_string()
+        sha256_hex(&bytes)
     }
 }
