@@ -116,7 +116,22 @@ pub fn try_acquire(lock_path: &Path) -> Result<AcquireOutcome> {
 ///
 /// Polls every 100ms. Returns `AcquireOutcome::HeldByOther` on timeout.
 pub fn acquire_with_timeout(lock_path: &Path, timeout: Duration) -> Result<AcquireOutcome> {
+    acquire_with_timeout_progress(lock_path, timeout, Duration::ZERO, |_| {})
+}
+
+/// Acquire with timeout and invoke `on_wait` at each progress interval while
+/// another process holds the lock. Polling remains at 100ms for responsiveness.
+fn acquire_with_timeout_progress<F>(
+    lock_path: &Path,
+    timeout: Duration,
+    progress_interval: Duration,
+    mut on_wait: F,
+) -> Result<AcquireOutcome>
+where
+    F: FnMut(Duration),
+{
     let start = Instant::now();
+    let mut next_progress = progress_interval;
     loop {
         let outcome = try_acquire(lock_path)?;
         match outcome {
@@ -124,8 +139,13 @@ pub fn acquire_with_timeout(lock_path: &Path, timeout: Duration) -> Result<Acqui
                 return Ok(AcquireOutcome::Acquired(flock, owner))
             }
             AcquireOutcome::HeldByOther { owner } => {
-                if start.elapsed() >= timeout {
+                let elapsed = start.elapsed();
+                if elapsed >= timeout {
                     return Ok(AcquireOutcome::HeldByOther { owner });
+                }
+                if !progress_interval.is_zero() && elapsed >= next_progress {
+                    on_wait(elapsed);
+                    next_progress += progress_interval;
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
@@ -163,7 +183,23 @@ pub fn with_lock_timeout<F, T>(lock_path: &Path, label: &str, timeout: Duration,
 where
     F: FnOnce() -> Result<T>,
 {
-    match acquire_with_timeout(lock_path, timeout)? {
+    with_lock_timeout_and_progress(lock_path, label, timeout, Duration::ZERO, |_| {}, f)
+}
+
+/// Run a closure while holding the global lock with periodic wait notifications.
+pub fn with_lock_timeout_and_progress<F, T, P>(
+    lock_path: &Path,
+    label: &str,
+    timeout: Duration,
+    progress_interval: Duration,
+    on_wait: P,
+    f: F,
+) -> Result<T>
+where
+    F: FnOnce() -> Result<T>,
+    P: FnMut(Duration),
+{
+    match acquire_with_timeout_progress(lock_path, timeout, progress_interval, on_wait)? {
         AcquireOutcome::Acquired(flock, owner) => {
             tracing::info!(target: "gar::lock", "Lock acquired by {}: {}", owner.pid, label);
             let result = f();
@@ -180,7 +216,7 @@ where
                 None => "owner metadata indisponivel".to_string(),
             };
             Err(GarError::LockHeld(format!(
-                "Operacao bloqueada por lock global ({}): {}",
+                "Timeout de {timeout:?} aguardando lock global ({}): {}",
                 lock_path.display(),
                 detail
             )))
@@ -372,8 +408,41 @@ mod tests {
         // Try to acquire via with_lock with short timeout — must fail.
         let r: Result<()> =
             with_lock_timeout(&path, "contended", Duration::from_millis(300), || Ok(()));
-        assert!(matches!(r, Err(GarError::LockHeld(_))));
+        match r {
+            Err(GarError::LockHeld(message)) => {
+                assert!(message.contains("Timeout de 300ms aguardando lock global"));
+            }
+            _ => panic!("expected LockHeld after timeout"),
+        }
 
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_with_lock_timeout_progress_notifies_while_contended() {
+        let path = temp_lock("progress");
+        cleanup(&path);
+
+        let first = try_acquire(&path).unwrap();
+        let _guard = match first {
+            AcquireOutcome::Acquired(f, _) => f,
+            _ => panic!("expected Acquired"),
+        };
+
+        let mut notifications = 0;
+        let outcome = acquire_with_timeout_progress(
+            &path,
+            Duration::from_millis(350),
+            Duration::from_millis(100),
+            |_| notifications += 1,
+        )
+        .unwrap();
+
+        assert!(matches!(outcome, AcquireOutcome::HeldByOther { .. }));
+        assert!(
+            notifications >= 2,
+            "expected periodic progress notifications"
+        );
         cleanup(&path);
     }
 
