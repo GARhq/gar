@@ -14,9 +14,10 @@ use crate::services::{generations, lock as global_lock, runtime_guard};
 /// include services that don't exist on a given host (e.g. garos-control-api
 /// on a non-API host).
 ///
-/// Post-migration (EROFS + JuiceFS + Caddy): the bash side dropped nginx/nfs-server
-/// in favour of caddy (web), redis-juicefs-meta (metadata) and minio (object
-/// storage). Keep this list aligned with `garos-update.sh`.
+/// Post-migration (EROFS + JuiceFS + Caddy): the bash side migrated away
+/// from the legacy web/NFS stack in favour of caddy (web),
+/// redis-juicefs-meta (metadata) and minio (object storage). Keep this
+/// list aligned with `garos-update.sh`.
 pub const DEFAULT_CRITICAL_SERVICES: &[&str] = &[
     "caddy",
     "dnsmasq",
@@ -594,9 +595,10 @@ mod tests {
         assert_eq!(
             DEFAULT_CRITICAL_SERVICES,
             &[
-                "nginx",
+                "caddy",
                 "dnsmasq",
-                "nfs-server",
+                "redis-juicefs-meta",
+                "minio",
                 "garos-control-api",
                 "garos-control-web"
             ]
