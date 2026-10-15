@@ -1,3 +1,35 @@
+## [v0.2.7] - 2026-10-14
+
+### Refactored
+- **refactor(services/boot)**: extraídos `render_active_ipxe()`, `render_empty_ipxe()` e
+  `validate_ipxe_build_id()` — elimina 4 cópias do template iPXE e 8 repetições do
+  padrão de validação de `build_id`. Sem mudança de comportamento.
+- **refactor(services/build)**: extraídos `copy_artifact()`, `resolve_erofs_src()` e
+  `sha256_of_optional_erofs()` — remove duplicação dos 3 blocos `cp -L` e do cálculo
+  duplicado de SHA256 do EROFS.
+- **refactor(services/channel)**: `target_hardware_class()` agora delega para
+  `target_hardware_class_str()` — elimina match duplicado de mapeamento hardware.
+- **refactor(services/branding)**: consolidados helpers SHA256; remove função de teste
+  duplicada.
+- **refactor(commands/server/lifecycle)**: `run_command()` unifica execução de
+  `nix flake update`/`nix flake check`; `is_unit_present()` simplifica health check;
+  `plan_only()` reescrito com tabela de etapas.
+- **refactor(services/rollback)**: `remove_staged_link_if_stale()` e `parse_key_value()`
+  removem duplicação de staged pointers e do parser KEY=VALUE.
+- **refactor(commands/image/build)**: extraídos `discover_artifacts()`,
+  `write_netboot_ipxe()`, `set_generation_permissions()`, `write_staged_manifest()`,
+  `write_pending_rollback_if_needed()` e `atomic_symlink_swap()`. Função `run()`
+  reduzida de ~360 para ~220 linhas.
+
+### Fixed
+- **style(gar)**: `cargo fmt` aplicado em todo o projeto.
+- **refactor(gar)**: todos os warnings do `clippy --all-targets -- -D warnings`
+  corrigidos.
+
+K-2026-10-14 / Onda 4 — Clean code + DRY
+
+---
+
 ## [v0.2.5] - 2026-10-12
 
 ### Fixed
