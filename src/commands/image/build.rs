@@ -117,7 +117,7 @@ pub async fn run(
     let target = target.unwrap_or(ImageTarget::DesktopGeneric);
     let channel = channel.unwrap_or(Channel::Generic);
 
-    output::section("==> gar image build");
+    output::header("gar image build");
     output::info(format!("Target: {}", target.as_str()));
     output::info(format!("Canal: {}", channel.as_str()));
     output::info(format!("Imagens: {}", cfg.images_root.display()));
@@ -253,15 +253,18 @@ pub async fn run(
     if cfg.json_output {
         output::json(&result)?;
     } else {
-        output::ok(format!("current -> {}", build_id));
-        println!();
-        println!("  Kernel : {}", result.kernel_url);
-        println!("  Initrd : {}", result.initrd_url);
-        println!("  iPXE   : {}", result.ipxe_url);
-        println!("  Target : {}", result.target);
-        println!("  Symlink: {} -> {}", current_link.display(), build_id);
-        println!();
-        println!("  gar image rollback   - reverter se necessário");
+        output::ok(format!("current -> {build_id}"));
+        output::blank_line();
+        output::kv("Kernel", result.kernel_url.clone());
+        output::kv("Initrd", result.initrd_url.clone());
+        output::kv("iPXE", result.ipxe_url.clone());
+        output::kv("Target", result.target.clone());
+        output::kv(
+            "Symlink",
+            format!("{} -> {build_id}", current_link.display()),
+        );
+        output::blank_line();
+        output::info("gar image rollback   - reverter se necessário");
     }
 
     // Reconcile statuses across all generations

@@ -44,7 +44,7 @@ pub async fn cmd_chmod(name: &str, perms: &str) -> Result<()> {
         })?;
     } else {
         output::ok(format!("modo do grupo '{}' atualizado", name));
-        println!("  modo: {:o}", mode & 0o7777);
+        output::kv("modo", format!("{:o}", mode & 0o7777));
     }
     Ok(())
 }
@@ -78,7 +78,7 @@ pub async fn cmd_permissions(name: &str) -> Result<()> {
         })?;
     } else {
         output::header(format!("Permissões do grupo '{}'", name));
-        println!();
+        output::blank_line();
         output::kv("setor", sector.display().to_string());
         output::kv("modo", perms.mode.clone());
         if members.is_empty() {

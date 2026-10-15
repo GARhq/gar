@@ -36,7 +36,7 @@ const UPDATE_LOCK_TIMEOUT_SECS: u64 = 60;
 /// `gar server switch` — nixos-rebuild switch.
 pub async fn cmd_switch() -> Result<()> {
     let cfg = Config::from_env()?;
-    output::section("==> gar server switch");
+    output::header("gar server switch");
     runtime_guard::validate(&cfg)?;
     runtime_guard::reexec_as_root_if_needed("server switch")?;
     run_nh_os(&cfg, "switch")?;
@@ -47,7 +47,7 @@ pub async fn cmd_switch() -> Result<()> {
 /// `gar server test` — nixos-rebuild test.
 pub async fn cmd_test() -> Result<()> {
     let cfg = Config::from_env()?;
-    output::section("==> gar server test");
+    output::header("gar server test");
     runtime_guard::validate(&cfg)?;
     runtime_guard::reexec_as_root_if_needed("server test")?;
     run_nh_os(&cfg, "test")?;
@@ -58,7 +58,7 @@ pub async fn cmd_test() -> Result<()> {
 /// `gar server rollback` — nixos-rebuild switch --rollback.
 pub async fn cmd_rollback() -> Result<()> {
     let _cfg = Config::from_env()?;
-    output::section("==> gar server rollback");
+    output::header("gar server rollback");
     runtime_guard::reexec_as_root_if_needed("server rollback")?;
     let status = Command::new("nixos-rebuild")
         .args(["switch", "--rollback"])
@@ -101,7 +101,7 @@ pub async fn cmd_update(
         services
     };
 
-    output::section("==> gar server update (Safe Update Flow)");
+    output::header("gar server update (Safe Update Flow)");
     output::info(format!("flake       : {}", flake_path.display()));
     output::info(format!("target_host : {}", cfg.target_host));
     output::info(format!("services    : {}", services.join(", ")));
@@ -228,7 +228,7 @@ pub async fn cmd_update(
 /// `gar server clean` — nh clean all + fallback.
 pub async fn cmd_clean() -> Result<()> {
     let cfg = Config::from_env()?;
-    output::section("==> gar server clean");
+    output::header("gar server clean");
     runtime_guard::reexec_as_root_if_needed("server clean")?;
 
     let nh_check = Command::new("which").arg("nh").output();

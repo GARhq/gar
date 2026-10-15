@@ -120,17 +120,17 @@ pub async fn cmd_add(
             catalog_updated: true,
         })?;
     } else {
-        output::ok(format!("usuário criado: {}", username));
-        println!("  home:   {}", home.display());
-        println!("  quota:  {}", quota);
-        println!("  grupo:  {}", group);
-        println!(
-            "  catalog: {}",
+        output::ok(format!("usuário criado: {username}"));
+        output::kv("home", home.display().to_string());
+        output::kv("quota", quota);
+        output::kv("grupo", group);
+        output::kv(
+            "catalog",
             if final_hash == "!" {
                 "conta bloqueada (use --password pra login gráfico)"
             } else {
                 "atualizado"
-            }
+            },
         );
     }
     Ok(())
@@ -271,8 +271,8 @@ pub async fn cmd_delete(username: &str, archive: bool) -> Result<()> {
             archive: archive_path.display().to_string(),
         })?;
     } else {
-        output::ok(format!("usuário arquivado: {}", username));
-        println!("  home arquivada em: {}", archive_path.display());
+        output::ok(format!("usuário arquivado: {username}"));
+        output::kv("home arquivada em", archive_path.display().to_string());
     }
     Ok(())
 }

@@ -63,7 +63,7 @@ pub async fn cmd_doctor(username: &str) -> Result<()> {
         })?;
     } else {
         output::header(format!("Doctor para usuário '{}'", username));
-        println!();
+        output::blank_line();
         output::kv("home", home.display().to_string());
         output::kv("filesystem", fstype);
         output::kv("owner", owner);

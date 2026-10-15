@@ -240,7 +240,7 @@ fn report(cfg: &Config, result: &GcResult, keep: u32) {
     }
 
     output::header("Garbage Collection");
-    println!();
+    output::blank_line();
 
     let mut summary_rows: Vec<Vec<String>> = Vec::new();
     if !result.preserved_pointers.is_empty() {
@@ -270,7 +270,7 @@ fn report(cfg: &Config, result: &GcResult, keep: u32) {
     summary_rows.push(vec!["Removidos".into(), result.removed.len().to_string()]);
     summary_rows.push(vec!["Mantidos no total".into(), result.kept.to_string()]);
     output::table(&["CATEGORIA", "QTD"], &summary_rows);
-    println!();
+    output::blank_line();
 
     if let Some(snap) = &result.snapshot_path {
         output::ok(format!("Snapshot de segurança: {snap}"));

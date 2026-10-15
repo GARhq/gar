@@ -84,7 +84,7 @@ fn output_encrypt_result(hex: &str) -> Result<()> {
         })?;
     } else {
         output::ok("Valor criptografado:");
-        println!("  {}", hex);
+        output::kv("", hex);
     }
     Ok(())
 }
@@ -97,7 +97,7 @@ fn output_decrypt_result(decrypted: &str) -> Result<()> {
         })?;
     } else {
         output::ok("Valor decriptografado:");
-        println!("  {}", decrypted);
+        output::kv("", decrypted);
     }
     Ok(())
 }

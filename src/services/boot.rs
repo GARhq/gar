@@ -670,6 +670,7 @@ pub fn read_manifest_system_path(manifest_path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output;
     use std::fs;
     use std::path::PathBuf;
 
@@ -946,20 +947,24 @@ mod tests {
         )
         .unwrap();
         let body = fs::read_to_string(&path).unwrap();
-        eprintln!(
+        // Demo output (rendered only when running the test with
+        // `--nocapture` or when a regression is detected). Using
+        // `output::info` so the message is routable through the
+        // same design system as runtime output.
+        output::info(format!(
             "\n[K-130R-2 demo] generic.ipxe produced by `gar` v{}:\n{}",
             env!("CARGO_PKG_VERSION"),
             body
-        );
-        eprintln!("[K-130R-2 demo] canonical kernel cmdline token: `garos.primaryNicMac=`");
-        eprintln!(
+        ));
+        output::info("[K-130R-2 demo] canonical kernel cmdline token: `garos.primaryNicMac=`");
+        output::info(format!(
             "[K-130R-2 demo] legacy banned kernel cmdline token `garos.primaryNicMac=`: {}",
             if body.contains("garos.primaryNicMac=") {
                 "PRESENT (REGRESSION — K-130R-2 VIOLATED)"
             } else {
                 "absent (correct)"
             }
-        );
+        ));
         cleanup(&dir);
     }
 

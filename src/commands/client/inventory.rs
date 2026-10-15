@@ -21,7 +21,7 @@ pub async fn cmd_list(json_flag: bool) -> Result<()> {
         output::json(&report)?;
     } else {
         output::header("GAR Client List");
-        println!();
+        output::blank_line();
         output::kv("source", source.clone());
         if count == 0 {
             output::info("(nenhum cliente encontrado — esperado até a Phase 0.5 migrar inventory .nix → .json)");

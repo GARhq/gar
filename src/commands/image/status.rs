@@ -101,13 +101,13 @@ pub async fn run() -> Result<()> {
 
     // Human-readable
     output::header("Status GAR Image");
-    println!();
+    output::blank_line();
 
     output::kv("Servidor", cfg.server_ip.clone());
     output::kv("HTTP Port", cfg.http_port.to_string());
     output::kv("Imagens", cfg.images_root.display().to_string());
     output::kv("HTTP Root", cfg.http_root.display().to_string());
-    println!();
+    output::blank_line();
 
     if let Some(cur) = &report.current {
         output::kv("Versão ativa", cur.version.clone());
@@ -116,7 +116,7 @@ pub async fn run() -> Result<()> {
         output::kv("Classe HW", cur.hardware_class.clone());
         output::kv("Timestamp", cur.timestamp.clone());
         output::kv("System path", cur.system_path.clone());
-        println!();
+        output::blank_line();
         output::kv(
             "Kernel URL",
             format!(
@@ -140,7 +140,7 @@ pub async fn run() -> Result<()> {
     }
 
     if let Some(prev) = &report.previous {
-        println!();
+        output::blank_line();
         output::kv("Versão ant.", prev.clone());
     }
     if let Some(rsc) = &report.rescue {
@@ -150,11 +150,11 @@ pub async fn run() -> Result<()> {
         output::kv("Versão staged", stg.clone());
     }
 
-    println!();
+    output::blank_line();
     let channel_rows = build_channel_rows(&report.channels);
     if !channel_rows.is_empty() {
         output::table(&["CANAL", "POINTER", "VERSÃO"], &channel_rows);
-        println!();
+        output::blank_line();
     }
 
     let count = count_versions(&cfg.images_root);

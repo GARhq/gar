@@ -79,7 +79,7 @@ pub async fn run() -> Result<()> {
     }
 
     output::header(format!("Versões em {}", cfg.images_root.display()));
-    println!();
+    output::blank_line();
 
     if rows.is_empty() {
         output::warn("Nenhuma versão encontrada.");
@@ -113,7 +113,7 @@ pub async fn run() -> Result<()> {
         &table_rows,
     );
 
-    println!();
+    output::blank_line();
     output::info(format!("Total: {} versão(ões)", rows.len()));
 
     Ok(())

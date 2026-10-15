@@ -40,7 +40,7 @@ pub async fn run(target: Option<String>, channel: Option<Channel>) -> Result<()>
             result.source, result.target
         ));
         if let Some(ch) = &result.channel {
-            println!("  Canal: {}", ch);
+            output::kv("Canal", ch.clone());
         }
     }
 

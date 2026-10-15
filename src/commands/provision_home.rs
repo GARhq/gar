@@ -67,10 +67,10 @@ fn is_btrfs_subvolume(path: &Path) -> bool {
 /// Cria um subvolume BTRFS em `path`, migrando dados existentes se necessário.
 fn create_btrfs_subvolume(path: &Path) -> Result<(), GarError> {
     if is_btrfs_subvolume(path) {
-        eprintln!(
-            "[GAROS:provision-home] Subvolume já existe em {}",
+        output::info(format!(
+            "[provision-home] subvolume já existe em {}",
             path.display()
-        );
+        ));
         return Ok(());
     }
 
@@ -164,16 +164,16 @@ fn create_btrfs_subvolume(path: &Path) -> Result<(), GarError> {
         }
         // Remove o tmp dir após a restauração
         let _ = std::fs::remove_dir_all(&tmp);
-        eprintln!(
-            "[GAROS:provision-home] Dados migrados para subvolume {}",
+        output::info(format!(
+            "[provision-home] dados migrados para subvolume {}",
             path.display()
-        );
+        ));
     }
 
-    eprintln!(
-        "[GAROS:provision-home] Subvolume criado: {}",
+    output::info(format!(
+        "[provision-home] subvolume criado: {}",
         path.display()
-    );
+    ));
     Ok(())
 }
 
@@ -200,15 +200,15 @@ fn apply_btrfs_quota(path: &Path, quota_gb: u64) -> Result<(), GarError> {
         .map_err(|e| GarError::validation(format!("Falha ao aplicar quota: {e}")))?;
 
     if !status.success() {
-        eprintln!(
-            "[GAROS:provision-home] AVISO: quota de {quota_gb}G não aplicada em {} (qgroup={qgroup})",
+        output::warn(format!(
+            "[provision-home] quota de {quota_gb}G não aplicada em {} (qgroup={qgroup})",
             path.display()
-        );
+        ));
     } else {
-        eprintln!(
-            "[GAROS:provision-home] Quota de {quota_gb}G aplicada em {} (qgroup={qgroup})",
+        output::ok(format!(
+            "[provision-home] quota de {quota_gb}G aplicada em {} (qgroup={qgroup})",
             path.display()
-        );
+        ));
     }
     Ok(())
 }
@@ -243,12 +243,12 @@ pub fn run(args: &ProvisionHomeArgs, json: bool) -> Result<(), GarError> {
         other => other,
     };
 
-    eprintln!(
-        "[GAROS:provision-home] Provisionando home de {} em {} (backend={:?})",
+    output::info(format!(
+        "[provision-home] provisionando home de {} em {} (backend={:?})",
         args.user,
         args.home_path.display(),
         backend
-    );
+    ));
 
     match backend {
         StorageBackend::Btrfs => {
@@ -278,10 +278,10 @@ pub fn run(args: &ProvisionHomeArgs, json: bool) -> Result<(), GarError> {
             "quota_gb": args.quota_gb,
         }))?;
     } else {
-        eprintln!(
-            "[GAROS:provision-home] ✓ Home de {} provisionada com sucesso",
+        output::ok(format!(
+            "[provision-home] home de {} provisionada com sucesso",
             args.user
-        );
+        ));
     }
 
     Ok(())

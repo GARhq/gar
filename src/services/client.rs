@@ -87,7 +87,10 @@ pub fn collect_report(images_root: &Path, inventory_path: &Path) -> ClientSessio
     let manifest = match current_manifest(images_root) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("gar client session-doctor: manifest parse failed: {}", e);
+            // Internal debug log: the session-doctor keeps running
+            // even when the manifest is missing, so this surfaces the
+            // parse failure to stderr without breaking the report.
+            eprintln!("gar client session-doctor: manifest parse failed: {e}");
             None
         }
     };

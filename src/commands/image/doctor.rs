@@ -171,7 +171,7 @@ fn render(cfg: &Config, report: &DoctorReport, fail: usize) {
         })
         .collect();
     output::table(&["CHECK", "STATUS", "DETAIL"], &rows);
-    println!();
+    output::blank_line();
     if fail == 0 {
         output::ok(format!("GAR server healthy ({} OK)", report.ok));
     } else {
@@ -179,7 +179,7 @@ fn render(cfg: &Config, report: &DoctorReport, fail: usize) {
             "GAR server has issues ({} FAIL, {} OK)",
             fail, report.ok
         ));
-        println!();
+        output::blank_line();
         output::panel(
             "Dicas",
             &[

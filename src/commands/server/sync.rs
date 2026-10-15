@@ -6,7 +6,7 @@ use crate::services::{git, runtime_guard};
 /// `gar server sync` — fetch + pull + submodule update.
 pub async fn cmd_sync() -> Result<()> {
     let cfg = Config::from_env()?;
-    output::section("==> gar server sync");
+    output::header("gar server sync");
     runtime_guard::reexec_as_root_if_needed("server sync")?;
     if !cfg.flake_path.is_dir() {
         return Err(GarError::config(format!(

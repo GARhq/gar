@@ -28,7 +28,7 @@ pub async fn cmd_members(name: &str, add: Option<&str>, remove: Option<&str>) ->
             output::json(&serde_json::json!({"group": name, "members": members}))?;
         } else {
             output::header(format!("Membros de '{}'", name));
-            println!();
+            output::blank_line();
             if members.is_empty() {
                 output::info("(nenhum)");
             } else {

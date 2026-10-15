@@ -61,13 +61,17 @@ pub async fn cmd_resize(username: &str, quota: &str, force: bool) -> Result<()> 
             usage_bytes: usage_b,
         })?;
     } else {
-        output::ok(format!("usuário redimensionado: {}", username));
-        println!("  uso atual:     {}", user_system::bytes_to_human(usage_b));
-        println!(
-            "  quota anterior: {}",
-            if current.is_empty() { "—" } else { &current }
+        output::ok(format!("usuário redimensionado: {username}"));
+        output::kv("uso atual", user_system::bytes_to_human(usage_b));
+        output::kv(
+            "quota anterior",
+            if current.is_empty() {
+                "—".to_string()
+            } else {
+                current.clone()
+            },
         );
-        println!("  nova quota:    {}", quota);
+        output::kv("nova quota", quota);
     }
     Ok(())
 }

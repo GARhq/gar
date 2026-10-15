@@ -176,6 +176,9 @@ pub fn cmd_repl() -> Result<()> {
 }
 
 /// `gar server path` — print operational flake path.
+///
+/// Output is machine-readable: bare path on stdout, no symbol, no
+/// color. Other tools pipe this into `cd` or `nix build`.
 pub fn cmd_path() -> Result<()> {
     let cfg = Config::from_env()?;
     println!("{}", cfg.flake_path.display());
@@ -223,7 +226,7 @@ pub async fn cmd_status() -> Result<()> {
         output::json(&report)?;
     } else {
         output::header("Server Status");
-        println!();
+        output::blank_line();
         output::kv("Flake path", report.flake_path.clone());
         output::kv("Target host", report.target_host.clone());
         output::kv("Runtime root", report.runtime_root.clone());

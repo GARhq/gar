@@ -257,8 +257,8 @@ pub async fn cmd_delete(name: &str, archive: bool) -> Result<()> {
             archive: archive_path.display().to_string(),
         })?;
     } else {
-        output::ok(format!("grupo arquivado: {}", name));
-        println!("  setor arquivado em: {}", archive_path.display());
+        output::ok(format!("grupo arquivado: {name}"));
+        output::kv("setor arquivado em", archive_path.display().to_string());
     }
     Ok(())
 }
