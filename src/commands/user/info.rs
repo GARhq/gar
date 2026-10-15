@@ -62,24 +62,27 @@ pub async fn cmd_doctor(username: &str) -> Result<()> {
             qgroup,
         })?;
     } else {
-        output::section(format!("Doctor para usuário '{}'", username));
-        println!("  home:        {}", home.display());
-        println!("  filesystem:  {}", fstype);
-        println!("  owner:       {}", owner);
-        println!("  modo:        {}", mode);
-        println!("  uso:         {}", user_system::bytes_to_human(usage_b));
-        println!(
-            "  quota:       {}",
-            if quota.is_empty() { "—" } else { &quota }
+        output::header(format!("Doctor para usuário '{}'", username));
+        println!();
+        output::kv("home", home.display().to_string());
+        output::kv("filesystem", fstype);
+        output::kv("owner", owner);
+        output::kv("modo", mode);
+        output::kv("uso", user_system::bytes_to_human(usage_b));
+        output::kv(
+            "quota",
+            if quota.is_empty() {
+                "—".into()
+            } else {
+                quota
+            },
         );
-        println!("  catalog_cliente: {}", catalog_status);
-        println!("  montagem:");
+        output::kv("catalog_cliente", catalog_status);
         for line in mount.lines() {
-            println!("    {}", line);
+            output::kv("montagem", line);
         }
-        println!("  qgroup:");
         for line in qgroup.lines() {
-            println!("    {}", line);
+            output::kv("qgroup", line);
         }
     }
     Ok(())
@@ -118,12 +121,12 @@ pub async fn cmd_activity(username: &str) -> Result<()> {
         output::info(format!("sem sessões registradas para {}", username));
         return Ok(());
     }
-    output::section(format!("Atividade de '{}'", username));
+    output::header(format!("Atividade de '{}'", username));
     for s in &sessions {
-        println!(
-            "  [{}] [{}] tty={} ip={}",
+        output::info(format!(
+            "[{}] [{}] tty={} ip={}",
             s.timestamp, s.action, s.tty, s.ip
-        );
+        ));
     }
     Ok(())
 }

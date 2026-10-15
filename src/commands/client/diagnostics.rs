@@ -2,7 +2,6 @@ use crate::config::Config;
 use crate::error::Result;
 use crate::output;
 use crate::services::client::{self, ClientSessionReport};
-use owo_colors::OwoColorize;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -23,59 +22,57 @@ pub async fn cmd_session_doctor() -> Result<()> {
     if cfg.json_output {
         output::json(&ClientSessionSummary { report, healthy })?;
     } else {
-        output::section("GAR Client Session Doctor");
+        output::header("GAR Client Session Doctor");
         println!();
 
         // Manifest
         match &report.manifest {
             Some(m) => {
-                println!("  [{}] cliente/current manifest", "OK".green().bold());
-                println!("        id:        {}", m.id);
+                output::ok("cliente/current manifest");
+                if !m.id.is_empty() {
+                    output::kv("id", m.id.clone());
+                }
                 if !m.target.is_empty() {
-                    println!("        target:    {}", m.target);
+                    output::kv("target", m.target.clone());
                 }
                 if !m.channel.is_empty() {
-                    println!("        canal:     {}", m.channel);
+                    output::kv("canal", m.channel.clone());
                 }
                 if !m.timestamp.is_empty() {
-                    println!("        timestamp: {}", m.timestamp);
+                    output::kv("timestamp", m.timestamp.clone());
                 }
                 if !m.status.is_empty() {
-                    println!("        status:    {}", m.status);
+                    output::kv("status", m.status.clone());
                 }
             }
             None => {
-                println!(
-                    "  [{}] cliente/current manifest: indisponivel",
-                    "GAP".yellow().bold()
-                );
-                println!(
-                    "        esperado em: {}/current/manifest.json",
-                    cfg.images_root.display()
+                output::warn("cliente/current manifest indisponível");
+                output::kv(
+                    "esperado em",
+                    format!("{}/current/manifest.json", cfg.images_root.display()),
                 );
             }
         }
         println!();
 
         // NFS exports
-        println!("  nfs exports:");
         if report.nfs_exports.is_empty() {
-            println!("    (exportfs nao retornou dados — pode nao ter nfs-server rodando)");
+            output::kv("nfs exports", "(exportfs não retornou dados)");
         } else {
+            output::kv("nfs exports", "");
             for line in report.nfs_exports.lines() {
-                println!("    {}", line);
+                output::kv("", line);
             }
         }
         println!();
 
         // Inventory
-        println!("  inventario:");
-        println!("    arquivo: {}", report.inventory_path);
+        output::kv("inventário arquivo", &report.inventory_path);
         if report.inventory.is_empty() {
-            println!("    (vazio ou nao encontrado)");
+            output::kv("inventário conteúdo", "(vazio ou não encontrado)");
         } else {
             for line in report.inventory.lines() {
-                println!("    {}", line);
+                output::kv("", line);
             }
         }
         println!();

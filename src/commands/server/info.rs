@@ -23,7 +23,7 @@ pub async fn cmd_check(
     flake_drift: bool,
 ) -> Result<()> {
     let cfg = Config::from_env()?;
-    output::section("==> gar server check");
+    output::header("gar server check");
     if flake_drift {
         return check_flake_drift(&cfg).await;
     }
@@ -222,27 +222,26 @@ pub async fn cmd_status() -> Result<()> {
     if cfg.json_output {
         output::json(&report)?;
     } else {
-        println!("flake_path: {}", report.flake_path);
-        println!("target_host: {}", report.target_host);
-        println!("runtime_root: {}", report.runtime_root);
-        println!(
-            "directory_exists: {}",
-            if report.directory_exists {
-                "sim"
-            } else {
-                "nao"
-            }
-        );
-        println!("current_generation: {}", report.current_generation);
-        println!(
-            "nixos_rebuild_available: {}",
-            if report.nixos_rebuild_available {
-                "sim"
-            } else {
-                "nao"
-            }
+        output::header("Server Status");
+        println!();
+        output::kv("Flake path", report.flake_path.clone());
+        output::kv("Target host", report.target_host.clone());
+        output::kv("Runtime root", report.runtime_root.clone());
+        output::kv("Directory exists", yes_no(report.directory_exists));
+        output::kv("Current generation", report.current_generation.clone());
+        output::kv(
+            "nixos-rebuild available",
+            yes_no(report.nixos_rebuild_available),
         );
     }
 
     Ok(())
+}
+
+fn yes_no(b: bool) -> &'static str {
+    if b {
+        "yes"
+    } else {
+        "no"
+    }
 }

@@ -1,5 +1,4 @@
 use chrono::Utc;
-use owo_colors::OwoColorize;
 use serde::Serialize;
 
 use crate::config::Config;
@@ -194,23 +193,23 @@ pub async fn cmd_list() -> Result<()> {
         output::warn("Nenhum grupo encontrado.");
         return Ok(());
     }
-    output::section("Grupos GAR");
+    output::header("Grupos GAR");
     println!();
-    println!(
-        "  {:<16} {:<8} {:<10} {:<10} {}",
-        "GRUPO".bold(),
-        "GID".bold(),
-        "QUOTA".bold(),
-        "USO".bold(),
-        "SETOR".bold()
-    );
-    for r in &rows {
-        println!(
-            "  {:<16} {:<8} {:<10} {:<10} {}",
-            r.name, r.gid, r.quota, r.usage, r.storage_path
-        );
-    }
-    println!("\n  Total: {} grupo(s)", rows.len());
+    let table_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            vec![
+                r.name.clone(),
+                r.gid.to_string(),
+                r.quota.clone(),
+                r.usage.clone(),
+                r.storage_path.clone(),
+            ]
+        })
+        .collect();
+    output::table(&["GRUPO", "GID", "QUOTA", "USO", "SETOR"], &table_rows);
+    println!();
+    output::info(format!("Total: {} grupo(s)", rows.len()));
     Ok(())
 }
 
