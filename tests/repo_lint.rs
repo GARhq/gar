@@ -76,7 +76,7 @@ fn test_root_markdown_allowlist() {
     // everything else belongs in `docs/` or is an intentional file we
     // list explicitly below.
     let root = repo_root();
-    let allowed_mds = ["README.md", "MIGRATION.md"];
+    let allowed_mds = ["README.md", "MIGRATION.md", "AGENTS.md", "CHANGELOG.md"];
 
     let files = list_files_in_dir(&root, Some(1), false);
     for file in files {
