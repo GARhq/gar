@@ -106,8 +106,12 @@ fn discover_artifacts(system_path: &std::path::Path) -> Result<SystemArtifacts> 
         kernel_params,
     })
 }
-
 /// Run the image build pipeline.
+///
+/// The 5 phases (build, publish, promote, reconcile, validate) are
+/// declared as `&[BuildPhase]` so the progress log walks the same
+/// data the orchestrator does. Each phase takes a [`BuildContext`]
+/// shared between all phases and returns a `Result<PhaseOutput>`.
 pub async fn run(
     target: Option<ImageTarget>,
     channel: Option<Channel>,
@@ -118,178 +122,293 @@ pub async fn run(
     let channel = channel.unwrap_or(Channel::Generic);
 
     output::header("gar image build");
-    output::info(format!("Target: {}", target.as_str()));
-    output::info(format!("Canal: {}", channel.as_str()));
-    output::info(format!("Imagens: {}", cfg.images_root.display()));
+    output::kv("Target", target.as_str());
+    output::kv("Canal", channel.as_str());
+    output::kv("Imagens", cfg.images_root.display().to_string());
     if options.tmux {
         let session = options
             .tmux_session
             .clone()
             .unwrap_or_else(|| "gar-build-pending".to_string());
-        output::info(format!(
-            "tmux session: {session} (timeout {}s)",
-            options.tmux_timeout
-        ));
-    }
-
-    // Phase 1: Build (delegated to Nix via build_or_reuse_system)
-    output::info("Buildando imagem...");
-    let build_id = build::compute_build_id(&cfg.images_root);
-    output::info(format!("Build ID: {build_id}"));
-
-    let system_path =
-        build::build_or_reuse_system(&cfg.flake_path, target.as_str(), channel.as_str())?;
-    output::info(format!("System path: {}", system_path.display()));
-
-    // Discover kernel/initrd/erofs/init paths inside the Nix store result.
-    let artifacts = discover_artifacts(&system_path)?;
-    let kernel_params_str = if artifacts.kernel_params.exists() {
-        fs::read_to_string(&artifacts.kernel_params).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
-    // Assemble BuildArtifact and delegate the rest to stage_generation
-    // (which handles copy + sha256 + manifest + Ed25519 sign + GC root).
-    let artifact = build::BuildArtifact {
-        build_id: build_id.clone(),
-        target: target.as_str().into(),
-        channel: channel.as_str().into(),
-        system_path: system_path.clone(),
-        init_path: artifacts.init.clone(),
-        kernel_path: artifacts.kernel.clone(),
-        initrd_path: artifacts.initrd.clone(),
-        kernel_params: artifacts.kernel_params.clone(),
-        kernel_sha256: String::new(), // populated inside stage_generation
-        initrd_sha256: String::new(),
-        timestamp: Utc::now().to_rfc3339(),
-    };
-
-    // Phase 2: Publish (delegate to existing stage_generation for full pipeline).
-    output::info("Publicando artefatos (stage_generation)...");
-    let _staged = build::stage_generation(
-        &cfg.images_root,
-        &build_id,
-        target.as_str(),
-        channel.as_str(),
-        &artifact,
-    )?;
-    let image_path = cfg.images_root.join(&build_id);
-
-    write_netboot_ipxe(
-        &cfg,
-        &image_path,
-        &build_id,
-        &artifacts.init,
-        &kernel_params_str,
-    )?;
-    set_generation_permissions(&image_path)?;
-
-    // GC root registration (best-effort)
-    let _ = build::create_gc_root(&system_path, &image_path.join(".gcroot"));
-
-    // Manifest writing
-    write_staged_manifest(
-        &image_path,
-        &build_id,
-        &system_path,
-        &artifacts,
-        target,
-        channel,
-    )?;
-
-    // Phase 3: Atomic symlink swap
-    output::info("Promovendo...");
-    let current_link = cfg.images_root.join("current");
-
-    // Capture previous build id BEFORE we swap, for auto-rollback.
-    let previous_build_id: Option<String> = fs::read_link(&current_link)
-        .ok()
-        .and_then(|t| t.file_name().map(|n| n.to_string_lossy().into_owned()));
-
-    write_pending_rollback_if_needed(
-        &cfg.images_root,
-        &previous_build_id,
-        &build_id,
-        channel.as_str(),
-    );
-
-    // Preserve previous pointer
-    if let Ok(old_target) = fs::read_link(&current_link) {
-        if let Some(old_name) = old_target.file_name().and_then(|n| n.to_str()) {
-            atomic_symlink_swap(&cfg.images_root, "previous", old_name)?;
-        }
-    }
-
-    // Atomic symlink swap for current and per-channel pointer.
-    atomic_symlink_swap(&cfg.images_root, "current", &build_id)?;
-    atomic_symlink_swap(
-        &cfg.images_root,
-        &format!("current-{}", channel.as_str()),
-        &build_id,
-    )?;
-
-    // Phase 4 (auto-rollback bookkeeping): pending marker stays in place so
-    // a later `gar image rollback --auto` can detect a broken publish.
-    // Operators can clear it explicitly with `gar image rollback --clear-pending`.
-
-    // Phase 4: Render URLs
-    let result = BuildResult {
-        build_id: build_id.clone(),
-        target: target.as_str().into(),
-        channel: channel.as_str().into(),
-        image_path: image_path.display().to_string(),
-        kernel_url: format!(
-            "http://{}:{}/netboot/current/bzImage",
-            cfg.server_ip, cfg.http_port
-        ),
-        initrd_url: format!(
-            "http://{}:{}/netboot/current/initrd",
-            cfg.server_ip, cfg.http_port
-        ),
-        ipxe_url: format!("http://{}:{}/boot.ipxe", cfg.server_ip, cfg.http_port),
-    };
-
-    if cfg.json_output {
-        output::json(&result)?;
-    } else {
-        output::ok(format!("current -> {build_id}"));
-        output::blank_line();
-        output::kv("Kernel", result.kernel_url.clone());
-        output::kv("Initrd", result.initrd_url.clone());
-        output::kv("iPXE", result.ipxe_url.clone());
-        output::kv("Target", result.target.clone());
         output::kv(
-            "Symlink",
-            format!("{} -> {build_id}", current_link.display()),
+            "tmux",
+            format!("{} (timeout {}s)", session, options.tmux_timeout),
         );
-        output::blank_line();
-        output::info("gar image rollback   - reverter se necessário");
     }
 
-    // Reconcile statuses across all generations
-    if let Err(e) = manifest::reconcile(&cfg.images_root, Some(&build_id), None, None, None) {
-        output::warn(format!("reconcile failed: {e}"));
+    let mut ctx = BuildContext::new(cfg, target, channel);
+    for (i, phase) in PHASES.iter().enumerate() {
+        output::info(format!("[{}/{}] {}", i + 1, PHASES.len(), phase.title));
+        (phase.run)(&mut ctx, &options).await?;
     }
 
-    // Phase 5: Fail-fast validation (K-2026-10-06).
-    // Runs after the symlink swap so the post-state is what the client
-    // would see. Default ON — barulho > silêncio.
-    if options.validate {
-        output::info("Validando artefatos (--validate)...");
-        if let Err(e) = crate::services::validation::validate_build_artifacts(&image_path) {
-            output::err(format!(
-                "Validação falhou — build NÃO está pronto para deploy: {e}"
-            ));
-            return Err(e);
-        }
-        output::ok("Validação OK (kernel/initrd/erofs/manifest/assinatura)");
-    }
-
+    render_build_result(&ctx);
     Ok(())
 }
 
-/// Write or copy the netboot.ipxe script for this generation.
+/// Mutable per-build state shared by every phase. The build_id and
+/// image_path are populated by `phase_build` and reused downstream.
+struct BuildContext {
+    cfg: Config,
+    target: ImageTarget,
+    channel: Channel,
+    build_id: String,
+    system_path: std::path::PathBuf,
+    artifacts: Option<SystemArtifacts>,
+    image_path: std::path::PathBuf,
+    previous_build_id: Option<String>,
+    artifact: Option<build::BuildArtifact>,
+}
+
+impl BuildContext {
+    fn new(cfg: Config, target: ImageTarget, channel: Channel) -> Self {
+        Self {
+            cfg,
+            target,
+            channel,
+            build_id: String::new(),
+            system_path: std::path::PathBuf::new(),
+            artifacts: None,
+            image_path: std::path::PathBuf::new(),
+            previous_build_id: None,
+            artifact: None,
+        }
+    }
+}
+
+/// One phase of the build pipeline. Phases are async because some
+/// steps (e.g. `stage_generation`) perform I/O; declaring them as
+/// async fn pointers makes the pipeline itself async and removes
+/// the temptation to block_on inside the orchestrator.
+type AsyncPhaseFn =
+    for<'a> fn(
+        &'a mut BuildContext,
+        &'a BuildOptions,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>>;
+
+struct BuildPhase {
+    title: &'static str,
+    run: AsyncPhaseFn,
+}
+
+const PHASES: &[BuildPhase] = &[
+    BuildPhase {
+        title: "Buildando imagem (nix build + descoberta de artefatos)",
+        run: phase_build,
+    },
+    BuildPhase {
+        title: "Publicando artefatos (stage_generation + netboot.ipxe)",
+        run: phase_publish,
+    },
+    BuildPhase {
+        title: "Promovendo (atomic symlink swap + pending rollback)",
+        run: phase_promote,
+    },
+    BuildPhase {
+        title: "Reconcilando status dos manifests",
+        run: phase_reconcile,
+    },
+    BuildPhase {
+        title: "Validando artefatos publicados",
+        run: phase_validate,
+    },
+];
+
+fn phase_build<'a>(
+    ctx: &'a mut BuildContext,
+    _options: &'a BuildOptions,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        ctx.build_id = build::compute_build_id(&ctx.cfg.images_root);
+        output::kv("Build ID", ctx.build_id.clone());
+        ctx.system_path = build::build_or_reuse_system(
+            &ctx.cfg.flake_path,
+            ctx.target.as_str(),
+            ctx.channel.as_str(),
+        )?;
+        output::kv("System path", ctx.system_path.display().to_string());
+        ctx.artifacts = Some(discover_artifacts(&ctx.system_path)?);
+        Ok(())
+    })
+}
+
+fn phase_publish<'a>(
+    ctx: &'a mut BuildContext,
+    _options: &'a BuildOptions,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        let artifacts = ctx
+            .artifacts
+            .as_ref()
+            .expect("phase_build populates artifacts");
+        let kernel_params_str = if artifacts.kernel_params.exists() {
+            fs::read_to_string(&artifacts.kernel_params).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        let artifact = build::BuildArtifact {
+            build_id: ctx.build_id.clone(),
+            target: ctx.target.as_str().into(),
+            channel: ctx.channel.as_str().into(),
+            system_path: ctx.system_path.clone(),
+            init_path: artifacts.init.clone(),
+            kernel_path: artifacts.kernel.clone(),
+            initrd_path: artifacts.initrd.clone(),
+            kernel_params: artifacts.kernel_params.clone(),
+            kernel_sha256: String::new(),
+            initrd_sha256: String::new(),
+            timestamp: Utc::now().to_rfc3339(),
+        };
+        ctx.artifact = Some(artifact);
+
+        let _staged = build::stage_generation(
+            &ctx.cfg.images_root,
+            &ctx.build_id,
+            ctx.target.as_str(),
+            ctx.channel.as_str(),
+            ctx.artifact.as_ref().unwrap(),
+        )?;
+
+        ctx.image_path = ctx.cfg.images_root.join(&ctx.build_id);
+        write_netboot_ipxe(
+            &ctx.cfg,
+            &ctx.image_path,
+            &ctx.build_id,
+            &artifacts.init,
+            &kernel_params_str,
+        )?;
+        set_generation_permissions(&ctx.image_path)?;
+
+        // GC root registration (best-effort)
+        let _ = build::create_gc_root(&ctx.system_path, &ctx.image_path.join(".gcroot"));
+
+        write_staged_manifest(
+            &ctx.image_path,
+            &ctx.build_id,
+            &ctx.system_path,
+            artifacts,
+            ctx.target,
+            ctx.channel,
+        )?;
+        Ok(())
+    })
+}
+
+fn phase_promote<'a>(
+    ctx: &'a mut BuildContext,
+    _options: &'a BuildOptions,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        let current_link = ctx.cfg.images_root.join("current");
+
+        // Capture previous build id BEFORE we swap, for auto-rollback.
+        ctx.previous_build_id = fs::read_link(&current_link)
+            .ok()
+            .and_then(|t| t.file_name().map(|n| n.to_string_lossy().into_owned()));
+
+        write_pending_rollback_if_needed(
+            &ctx.cfg.images_root,
+            &ctx.previous_build_id,
+            &ctx.build_id,
+            ctx.channel.as_str(),
+        );
+
+        // Preserve previous pointer
+        if let Ok(old_target) = fs::read_link(&current_link) {
+            if let Some(old_name) = old_target.file_name().and_then(|n| n.to_str()) {
+                atomic_symlink_swap(&ctx.cfg.images_root, "previous", old_name)?;
+            }
+        }
+
+        // Atomic symlink swap for current and per-channel pointer.
+        atomic_symlink_swap(&ctx.cfg.images_root, "current", &ctx.build_id)?;
+        atomic_symlink_swap(
+            &ctx.cfg.images_root,
+            &format!("current-{}", ctx.channel.as_str()),
+            &ctx.build_id,
+        )?;
+        Ok(())
+    })
+}
+
+fn phase_reconcile<'a>(
+    ctx: &'a mut BuildContext,
+    _options: &'a BuildOptions,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        if let Err(e) =
+            manifest::reconcile(&ctx.cfg.images_root, Some(&ctx.build_id), None, None, None)
+        {
+            output::warn(format!("reconcile failed: {e}"));
+        }
+        Ok(())
+    })
+}
+
+fn phase_validate<'a>(
+    ctx: &'a mut BuildContext,
+    options: &'a BuildOptions,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        // K-2026-10-06: runs after the symlink swap so the post-state is
+        // what the client would see. Default ON — barulho > silêncio.
+        if !options.validate {
+            return Ok(());
+        }
+        match crate::services::validation::validate_build_artifacts(&ctx.image_path) {
+            Ok(()) => output::ok("Validação OK (kernel/initrd/erofs/manifest/assinatura)"),
+            Err(e) => {
+                output::err(format!(
+                    "Validação falhou — build NÃO está pronto para deploy: {e}"
+                ));
+                return Err(e);
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Human-readable + JSON summary of a successful build.
+fn render_build_result(ctx: &BuildContext) {
+    let result = BuildResult {
+        build_id: ctx.build_id.clone(),
+        target: ctx.target.as_str().into(),
+        channel: ctx.channel.as_str().into(),
+        image_path: ctx.image_path.display().to_string(),
+        kernel_url: format!(
+            "http://{}:{}/netboot/current/bzImage",
+            ctx.cfg.server_ip, ctx.cfg.http_port
+        ),
+        initrd_url: format!(
+            "http://{}:{}/netboot/current/initrd",
+            ctx.cfg.server_ip, ctx.cfg.http_port
+        ),
+        ipxe_url: format!(
+            "http://{}:{}/boot.ipxe",
+            ctx.cfg.server_ip, ctx.cfg.http_port
+        ),
+    };
+    let current_link = ctx.cfg.images_root.join("current");
+
+    if ctx.cfg.json_output {
+        let _ = output::json(&result);
+        return;
+    }
+    output::ok(format!("current -> {}", ctx.build_id));
+    output::blank_line();
+    output::kv("Kernel", result.kernel_url);
+    output::kv("Initrd", result.initrd_url);
+    output::kv("iPXE", result.ipxe_url);
+    output::kv("Target", result.target);
+    output::kv(
+        "Symlink",
+        format!("{} -> {}", current_link.display(), ctx.build_id),
+    );
+    output::blank_line();
+    output::info("gar image rollback   - reverter se necessário");
+}
+
 fn write_netboot_ipxe(
     cfg: &Config,
     image_path: &std::path::Path,
