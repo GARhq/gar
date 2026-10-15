@@ -199,18 +199,8 @@ fn read_pointer_status(images_root: &Path, name: &str) -> Result<Option<CurrentS
 }
 
 fn count_versions(images_root: &Path) -> usize {
-    std::fs::read_dir(images_root)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path()
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|n| n.starts_with('v'))
-                        .unwrap_or(false)
-                })
-                .count()
-        })
+    crate::services::discovery::iter_version_dirs(images_root)
+        .map(|v| v.len())
         .unwrap_or(0)
 }
 

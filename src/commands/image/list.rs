@@ -41,15 +41,10 @@ pub async fn run() -> Result<()> {
 
     let mut rows: Vec<GenerationRow> = Vec::new();
 
-    for entry in std::fs::read_dir(&cfg.images_root)? {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
+    for path in crate::services::discovery::iter_version_dirs(&cfg.images_root)? {
         let version = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) if n.starts_with('v') => n.to_string(),
-            _ => continue,
+            Some(n) => n.to_string(),
+            None => continue,
         };
 
         let size = dir_size(&path);
