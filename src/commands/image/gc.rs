@@ -90,7 +90,12 @@ pub async fn run(keep: Option<u32>) -> Result<()> {
     // Snapshot before any destructive action. If the snapshot fails
     // we refuse the whole GC so we never lose data we couldn't recover.
     let snapshot_path = if !classification.to_remove.is_empty() {
-        take_snapshot(&cfg.images_root).await.map_err(|e| {
+        crate::services::snapshot::take(
+            &cfg.images_root,
+            crate::services::snapshot::DEFAULT_SNAPSHOTS_ROOT,
+        )
+        .await
+        .map_err(|e| {
             GarError::gc(format!(
                 "snapshot falhou — recusando remoções (images_root={}, err={e})",
                 cfg.images_root.display()
@@ -101,7 +106,10 @@ pub async fn run(keep: Option<u32>) -> Result<()> {
     };
 
     let removed = remove_marked(&classification.to_remove);
-    let _ = prune_snapshots("/srv/data/snapshots", cfg.gc_snapshot_keep);
+    let _ = crate::services::snapshot::prune(
+        crate::services::snapshot::DEFAULT_SNAPSHOTS_ROOT,
+        cfg.gc_snapshot_keep,
+    );
 
     let result = build_report(classification, removed, snapshot_path);
     report(&cfg, &result, keep);
@@ -261,97 +269,6 @@ fn resolve_pointers(images_root: &Path) -> Result<HashMap<String, &'static str>>
         }
     }
     Ok(map)
-}
-
-/// Create a read-only snapshot of `images_root` under
-/// `/srv/data/snapshots/images-pre-gc-<timestamp>`. Tries BTRFS
-/// first; falls back to `cp -al` (hard-link copy) when the source
-/// is not on a BTRFS subvolume.
-async fn take_snapshot(images_root: &Path) -> Result<Option<String>> {
-    let snapshots_root = "/srv/data/snapshots";
-    std::fs::create_dir_all(snapshots_root).ok();
-
-    let snapshot_name = format!(
-        "images-pre-gc-{}",
-        chrono::Utc::now().format("%Y%m%d-%H%M%S")
-    );
-    let path = format!("{snapshots_root}/{snapshot_name}");
-
-    let snap_ok = btrfs_snapshot(images_root, &path)
-        .await
-        .or_else(|_| cp_al_snapshot(images_root, &path));
-    if snap_ok.is_ok() {
-        Ok(Some(path))
-    } else {
-        Ok(None)
-    }
-}
-
-fn btrfs_snapshot<'a>(
-    src: &'a Path,
-    dst: &'a str,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
-    Box::pin(async move {
-        // Probe: is `src` a BTRFS subvolume? `btrfs subvolume show` exits
-        // 0 only when the path is one.
-        let check = std::process::Command::new("btrfs")
-            .args(["subvolume", "show", &src.display().to_string()])
-            .output();
-        match check {
-            Ok(o) if o.status.success() => {
-                crate::services::btrfs::snapshot_readonly(src, Path::new(dst))
-                    .await
-                    .map_err(|e| GarError::gc(format!("btrfs snapshot falhou: {e}")))
-            }
-            _ => Err(GarError::gc("btrfs não disponível ou src não é subvolume")),
-        }
-    })
-}
-
-fn cp_al_snapshot(src: &Path, dst: &str) -> Result<()> {
-    let status = std::process::Command::new("cp")
-        .args(["-al", &src.display().to_string(), dst])
-        .status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(GarError::gc(format!(
-            "cp -al falhou: exit {}",
-            status.code().unwrap_or(-1)
-        )))
-    }
-}
-
-/// Keep the `keep` newest `images-pre-gc-*` snapshots; delete the
-/// rest. Silently ignores per-entry failures.
-fn prune_snapshots(snapshots_root: &str, keep: u32) -> Result<()> {
-    let path = Path::new(snapshots_root);
-    if !path.exists() {
-        return Ok(());
-    }
-
-    let mut snaps: Vec<_> = std::fs::read_dir(path)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with("images-pre-gc-")
-        })
-        .collect();
-
-    snaps.sort_by_key(|e| {
-        e.metadata()
-            .and_then(|m| m.modified())
-            .unwrap_or(SystemTime::UNIX_EPOCH)
-    });
-    snaps.reverse();
-
-    if snaps.len() > keep as usize {
-        for s in &snaps[keep as usize..] {
-            let _ = std::fs::remove_dir_all(s.path());
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
