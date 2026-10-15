@@ -23,7 +23,7 @@ pub async fn cmd_session_doctor() -> Result<()> {
         output::json(&ClientSessionSummary { report, healthy })?;
     } else {
         output::header("GAR Client Session Doctor");
-        println!();
+        output::blank_line();
 
         // Manifest
         match &report.manifest {
@@ -53,7 +53,7 @@ pub async fn cmd_session_doctor() -> Result<()> {
                 );
             }
         }
-        println!();
+        output::blank_line();
 
         // NFS exports
         if report.nfs_exports.is_empty() {
@@ -64,7 +64,7 @@ pub async fn cmd_session_doctor() -> Result<()> {
                 output::kv("", line);
             }
         }
-        println!();
+        output::blank_line();
 
         // Inventory
         output::kv("inventário arquivo", &report.inventory_path);
@@ -75,7 +75,7 @@ pub async fn cmd_session_doctor() -> Result<()> {
                 output::kv("", line);
             }
         }
-        println!();
+        output::blank_line();
 
         if healthy {
             output::ok(format!(

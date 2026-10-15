@@ -35,10 +35,10 @@ pub async fn cmd_ensure_defaults() -> Result<()> {
     } else {
         output::ok("default groups ensured");
         if !created.is_empty() {
-            println!("  criados:    {}", created.join(", "));
+            output::kv("criados", created.join(", "));
         }
         if !already.is_empty() {
-            println!("  preexistente: {}", already.join(", "));
+            output::kv("preexistentes", already.join(", "));
         }
     }
     Ok(())

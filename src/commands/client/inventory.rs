@@ -20,24 +20,27 @@ pub async fn cmd_list(json_flag: bool) -> Result<()> {
     if json_flag {
         output::json(&report)?;
     } else {
-        output::section("GAR Client List");
+        output::header("GAR Client List");
         println!();
-        println!("  source: {}", source);
+        output::kv("source", source.clone());
         if count == 0 {
-            println!(
-                "  (nenhum cliente encontrado — esperado até a Phase 0.5 migrar inventory .nix → .json)"
-            );
+            output::info("(nenhum cliente encontrado — esperado até a Phase 0.5 migrar inventory .nix → .json)");
             output::info("Phase 0.5: migração inventory .nix → /etc/gar/inventory/clients.json");
         } else {
-            println!("  {:<17}  {:<15}  {:<16}  status", "mac", "ip", "hostname");
-            println!("  {:-<17}  {:-<15}  {:-<16}  ------", "", "", "");
-            for c in &report.clients {
-                println!(
-                    "  {:<17}  {:<15}  {:<16}  {:?}",
-                    c.mac, c.ip, c.hostname, c.status
-                );
-            }
-            output::ok(format!("{} cliente(s) listado(s)", count));
+            let rows: Vec<Vec<String>> = report
+                .clients
+                .iter()
+                .map(|c| {
+                    vec![
+                        c.mac.clone(),
+                        c.ip.clone(),
+                        c.hostname.clone(),
+                        format!("{:?}", c.status),
+                    ]
+                })
+                .collect();
+            output::table(&["MAC", "IP", "HOSTNAME", "STATUS"], &rows);
+            output::ok(format!("{count} cliente(s) listado(s)"));
         }
     }
     Ok(())

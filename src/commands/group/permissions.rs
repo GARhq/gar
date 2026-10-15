@@ -77,21 +77,20 @@ pub async fn cmd_permissions(name: &str) -> Result<()> {
             extras: perms.extra,
         })?;
     } else {
-        output::section(format!("Permissões do grupo '{}'", name));
-        println!("  setor: {}", sector.display());
-        println!("  modo:  {}", perms.mode);
-        println!("  membros:");
+        output::header(format!("Permissões do grupo '{}'", name));
+        println!();
+        output::kv("setor", sector.display().to_string());
+        output::kv("modo", perms.mode.clone());
         if members.is_empty() {
-            println!("    (nenhum)");
+            output::kv("membros", "(nenhum)");
         } else {
             for m in &members {
-                println!("    {}", m);
+                output::kv("membro", m.clone());
             }
         }
         if !perms.extra.is_empty() {
-            println!("  extras:");
             for (k, v) in &perms.extra {
-                println!("    {}={}", k, v);
+                output::kv(k, v.clone());
             }
         }
     }

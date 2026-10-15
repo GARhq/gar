@@ -1,5 +1,4 @@
 use chrono::Utc;
-use owo_colors::OwoColorize;
 use serde::Serialize;
 use std::path::Path;
 
@@ -201,23 +200,23 @@ pub async fn cmd_list() -> Result<()> {
         return Ok(());
     }
 
-    output::section("Usuários GAR");
-    println!();
-    println!(
-        "  {:<20} {:<12} {:<10} {:<8} {}",
-        "USERNAME".bold(),
-        "USO".bold(),
-        "QUOTA".bold(),
-        "%".bold(),
-        "HOME".bold()
-    );
-    for row in &rows {
-        println!(
-            "  {:<20} {:<12} {:<10} {:<8} {}",
-            row.username, row.usage, row.quota, row.percent, row.home
-        );
-    }
-    println!("\n  Total: {} usuário(s)", rows.len());
+    output::header("Usuários GAR");
+    output::blank_line();
+    let table_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            vec![
+                row.username.clone(),
+                row.usage.clone(),
+                row.quota.clone(),
+                row.percent.clone(),
+                row.home.clone(),
+            ]
+        })
+        .collect();
+    output::table(&["USERNAME", "USO", "QUOTA", "%", "HOME"], &table_rows);
+    output::blank_line();
+    output::info(format!("Total: {} usuário(s)", rows.len()));
     Ok(())
 }
 

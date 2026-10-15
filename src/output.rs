@@ -211,6 +211,13 @@ pub fn panel(title: &str, lines: &[String]) {
 
 // ─── Machine output ─────────────────────────────────────────────────────
 
+/// Print a blank line to stdout. Used as a visual section break
+/// between blocks of related output (e.g. between the manifest
+/// block and the NFS block in `gar client doctor`).
+pub fn blank_line() {
+    println!();
+}
+
 /// Emit a value as pretty-printed JSON to stdout. Used when the
 /// `--json` flag is on.
 pub fn json<T: Serialize>(value: &T) -> crate::error::Result<()> {
@@ -286,5 +293,10 @@ mod tests {
     fn test_json_serialize() {
         let v = serde_json::json!({"status": "ok"});
         json(&v).expect("should serialize");
+    }
+
+    #[test]
+    fn test_blank_line_does_not_panic() {
+        blank_line();
     }
 }

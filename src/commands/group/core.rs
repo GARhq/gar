@@ -89,11 +89,13 @@ pub async fn cmd_add(
             catalog_updated: true,
         })?;
     } else {
-        output::ok(format!("grupo criado: {}", name));
-        println!("  descricao:  {}", description);
-        println!("  gid:        {}", gid);
-        println!("  setor:      {}", sector.display());
-        println!("  quota:      {}", quota.human);
+        output::ok(format!("grupo criado: {name}"));
+        // `description` was already resolved to a `&str` by the
+        // earlier `description.unwrap_or("GAROS Group")` above.
+        output::kv("descrição", description);
+        output::kv("gid", gid.to_string());
+        output::kv("setor", sector.display().to_string());
+        output::kv("quota", quota.human.clone());
     }
     Ok(())
 }
@@ -194,7 +196,7 @@ pub async fn cmd_list() -> Result<()> {
         return Ok(());
     }
     output::header("Grupos GAR");
-    println!();
+    output::blank_line();
     let table_rows: Vec<Vec<String>> = rows
         .iter()
         .map(|r| {
@@ -208,7 +210,7 @@ pub async fn cmd_list() -> Result<()> {
         })
         .collect();
     output::table(&["GRUPO", "GID", "QUOTA", "USO", "SETOR"], &table_rows);
-    println!();
+    output::blank_line();
     output::info(format!("Total: {} grupo(s)", rows.len()));
     Ok(())
 }

@@ -1,7 +1,6 @@
 //! `gar branding` subcommand — branding diagnostics.
 
 use clap::Args;
-use owo_colors::OwoColorize;
 use serde::Serialize;
 
 use crate::cli::BrandingCmd;
@@ -51,8 +50,8 @@ pub async fn cmd_doctor(flags: &DoctorFlags) -> Result<()> {
     if cfg.json_output {
         output::json(&BrandingSummary { report, healthy })?;
     } else {
-        output::section("GAR Branding Doctor");
-        println!();
+        output::header("GAR Branding Doctor");
+        output::blank_line();
         render_check(&report.sddm_current);
         render_check(&report.sddm_theme_dirs);
         render_check(&report.plymouth_theme);
@@ -60,7 +59,7 @@ pub async fn cmd_doctor(flags: &DoctorFlags) -> Result<()> {
         render_check(&report.plasma_desktoptheme);
         render_check(&report.plasma_color_schemes);
         render_check(&report.plasma_wallpapers);
-        println!();
+        output::blank_line();
         if healthy {
             output::ok(format!(
                 "branding OK ({}/{} checks passed)",
@@ -80,21 +79,21 @@ pub async fn cmd_doctor(flags: &DoctorFlags) -> Result<()> {
 }
 
 fn render_check(c: &branding::BrandingCheck) {
-    let status = if c.found && !c.matches.is_empty() && c.matches[0] != "nao encontrado" {
-        format!("{}", "OK".green().bold())
+    let passed = c.found && !c.matches.is_empty() && c.matches[0] != "nao encontrado";
+    if passed {
+        output::ok(&c.label);
     } else {
-        format!("{}", "GAP".yellow().bold())
-    };
-    println!("  [{}] {}", status, c.label.bold());
-    println!("        path:    {}", c.path);
+        output::warn(&c.label);
+    }
+    output::kv("path", c.path.clone());
     if c.matches.is_empty() {
-        println!("        matches: (vazio)");
+        output::kv("matches", "(vazio)");
     } else if c.matches.len() == 1 {
-        println!("        matches: {}", c.matches[0]);
+        output::kv("matches", c.matches[0].clone());
     } else {
-        println!("        matches:");
+        output::kv("matches", "");
         for m in &c.matches {
-            println!("          - {}", m);
+            output::kv("", m.clone());
         }
     }
 }

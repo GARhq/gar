@@ -27,12 +27,13 @@ pub async fn cmd_members(name: &str, add: Option<&str>, remove: Option<&str>) ->
         if cfg.json_output {
             output::json(&serde_json::json!({"group": name, "members": members}))?;
         } else {
-            output::section(format!("Membros de '{}'", name));
+            output::header(format!("Membros de '{}'", name));
+            println!();
             if members.is_empty() {
-                println!("  (nenhum)");
+                output::info("(nenhum)");
             } else {
                 for m in &members {
-                    println!("  {}", m);
+                    output::kv("membro", m.clone());
                 }
             }
         }
@@ -53,10 +54,10 @@ pub async fn cmd_members(name: &str, add: Option<&str>, remove: Option<&str>) ->
     } else {
         output::ok(format!("membros de '{}' atualizados", name));
         if let Some(u) = add {
-            println!("  adicionado:  {}", u);
+            output::kv("adicionado", u);
         }
         if let Some(u) = remove {
-            println!("  removido:    {}", u);
+            output::kv("removido", u);
         }
     }
     Ok(())
